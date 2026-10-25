@@ -9,6 +9,7 @@ import (
 	"github.com/AlexanderTar/swarmrun/internal/adapter"
 	"github.com/AlexanderTar/swarmrun/internal/advisor"
 	"github.com/AlexanderTar/swarmrun/internal/catalog"
+	"github.com/AlexanderTar/swarmrun/internal/creds"
 	"github.com/AlexanderTar/swarmrun/internal/execx"
 	"github.com/AlexanderTar/swarmrun/internal/grokhome"
 	"github.com/AlexanderTar/swarmrun/internal/install"
@@ -89,12 +90,12 @@ func TestKindParity(t *testing.T) {
 	webCopy := readFile(t, filepath.Join(root, "web/src/copy.ts"))
 	swiftCopy := readFile(t, filepath.Join(root, "apps/menubar/Sources/SwarmBarKit/Copy.swift"))
 	fetchers := map[kinds.AgentKind]bool{}
-	for _, f := range catalog.DefaultFetchers("/h", "/h/.swarm", "u") {
+	for _, f := range catalog.DefaultFetchers("/h", "/h/.swarm", creds.Keychain(nil, "u")) {
 		fetchers[f.Kind()] = true
 	}
 	sources := map[kinds.AgentKind]bool{}
 	run := (&execx.Fake{}).Runner()
-	for _, s := range usage.DefaultSources("/h", "u", nil, run, nil, nil, &usage.Grok{}) {
+	for _, s := range usage.DefaultSources("/h", creds.Keychain(run, "u"), nil, run, nil, nil, &usage.Grok{}) {
 		sources[s.Agent] = true
 	}
 
