@@ -149,7 +149,7 @@ func workflowTool(s *Server) ToolDef {
 				if err != nil {
 					return nil, err
 				}
-				st, err := s.RT.ResumeWorkflow(ctx, orch, in.Item, in.Decision, in.Note, c.SessionID, in.RequestID)
+				st, err := s.RT.ResumeWorkflow(ctx, orch, runtime.ResumeWorkflowInput{ItemKey: in.Item, Decision: in.Decision, Note: in.Note, SessionID: c.SessionID, RequestID: in.RequestID})
 				if err != nil {
 					return nil, err
 				}

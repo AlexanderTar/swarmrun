@@ -81,7 +81,7 @@ func TestResumeAndCancelRefuseWithoutLiveWorkflow(t *testing.T) {
 	orch, taskKey := seedWorkflowTask(t, s, buildReviewSpec(t))
 
 	want := taskKey + "'s workflow isn't waiting on you (state: none)."
-	if _, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", "", "", ""); err == nil || err.Error() != want {
+	if _, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "", SessionID: "", RequestID: ""}); err == nil || err.Error() != want {
 		t.Fatalf("resume err = %v, want %q", err, want)
 	}
 	if _, err := s.CancelWorkflow(ctx, orch, taskKey, "", ""); err == nil || err.Error() != want {
@@ -101,7 +101,7 @@ func TestResumeWorkflowRejectsUnknownDecision(t *testing.T) {
 	orch, taskKey, _, st, head := startedWorkflow(t, s, gatedBuildReviewSpec(t, 1))
 	escalateViaRoundsExhausted(t, s, orch, taskKey, st.ID, head)
 
-	_, err := s.ResumeWorkflow(ctx, orch, taskKey, "shrug", "", "", "")
+	_, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "shrug", Note: "", SessionID: "", RequestID: ""})
 	if err == nil || err.Error() != `decision must be "retry", "accept" or "fail".` {
 		t.Fatalf("err = %v", err)
 	}
@@ -130,7 +130,7 @@ func TestCancelWorkflowFromEscalatedThenRefusesSecondCancel(t *testing.T) {
 		t.Fatalf("second cancel err = %v, want a state: cancelled refusal", err)
 	}
 	// A resume of a cancelled workflow is refused the same way.
-	_, err = s.ResumeWorkflow(ctx, orch, taskKey, "accept", "", "", "")
+	_, err = s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "accept", Note: "", SessionID: "", RequestID: ""})
 	if err == nil || !strings.Contains(err.Error(), "state: cancelled") {
 		t.Fatalf("resume err = %v, want a state: cancelled refusal", err)
 	}

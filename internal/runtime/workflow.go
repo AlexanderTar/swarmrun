@@ -46,6 +46,14 @@ type StartWorkflowInput struct {
 	SessionID, RequestID string
 }
 
+// ResumeWorkflowInput is swarm_workflow op:"resume". Worktrees is only valid
+// with Decision "retry": non-empty, it replaces the workflow's stored list.
+type ResumeWorkflowInput struct {
+	ItemKey, Decision, Note string
+	Worktrees               []WorkflowWorktree
+	SessionID, RequestID    string
+}
+
 // WorkflowRunView is one workflow_runs row the way swarm_workflow/swarm_read
 // report it (spec B3/B7).
 type WorkflowRunView struct {
@@ -318,6 +326,31 @@ func (s *Store) CheckLiveWorkflowBriefs(ctx context.Context, tx *sql.Tx, it item
 	return s.preflightBriefs(ctx, orch, it, wf)
 }
 
+// checkWorkflowWorktreeOwnership is the ownership rule a workflow's worktree
+// list must meet, on start and on a resume retry that replaces it: a story
+// needs a tree the caller owns, a task a read-write one. verb opens the
+// refusal ("Start"/"Resume").
+func (s *Store) checkWorkflowWorktreeOwnership(ctx context.Context, it items.Item, wts []WorkflowWorktree, ownerID, verb string) error {
+	if it.Type == items.Story {
+		ok, err := s.callerOwnsWorktree(ctx, wts, ownerID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return &items.Error{Code: items.CodeBadRequest, Message: verb + " needs a worktree you own."}
+		}
+		return nil
+	}
+	ok, err := s.callerOwnsRWWorktree(ctx, wts, ownerID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return &items.Error{Code: items.CodeBadRequest, Message: verb + " needs a read-write worktree you own."}
+	}
+	return nil
+}
+
 // StartWorkflow is swarm_workflow op:"start" (spec B4/B7): validates, inserts
 // the workflows row (round 1, running) and calls advance.
 func (s *Store) StartWorkflow(ctx context.Context, orch Agent, in StartWorkflowInput) (WorkflowState, error) {
@@ -358,22 +391,8 @@ func (s *Store) StartWorkflow(ctx context.Context, orch Agent, in StartWorkflowI
 	if err := s.validateWorktrees(ctx, in.Worktrees); err != nil {
 		return WorkflowState{}, err
 	}
-	if it.Type == items.Story {
-		ok, err := s.callerOwnsWorktree(ctx, in.Worktrees, orch.ID)
-		if err != nil {
-			return WorkflowState{}, err
-		}
-		if !ok {
-			return WorkflowState{}, &items.Error{Code: items.CodeBadRequest, Message: "Start needs a worktree you own."}
-		}
-	} else {
-		ok, err := s.callerOwnsRWWorktree(ctx, in.Worktrees, orch.ID)
-		if err != nil {
-			return WorkflowState{}, err
-		}
-		if !ok {
-			return WorkflowState{}, &items.Error{Code: items.CodeBadRequest, Message: "Start needs a read-write worktree you own."}
-		}
+	if err := s.checkWorkflowWorktreeOwnership(ctx, it, in.Worktrees, orch.ID, "Start"); err != nil {
+		return WorkflowState{}, err
 	}
 
 	wtJSON, err := json.Marshal(in.Worktrees)
@@ -1948,7 +1967,8 @@ func (s *Store) deliverNote(ctx context.Context, agentID, note string) error {
 // escalated workflow -- ownership isn't re-checked here the way Start's is,
 // since only the workflow's own owner can ever see it escalated to them in
 // the first place via their inbox relay).
-func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, itemKey, decision, note, sessionID, requestID string) (WorkflowState, error) {
+func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, in ResumeWorkflowInput) (WorkflowState, error) {
+	itemKey, decision, note, sessionID, requestID := in.ItemKey, in.Decision, in.Note, in.SessionID, in.RequestID
 	var st WorkflowState
 	if hit, err := PeekIdempotent(ctx, s, sessionID, requestID, &st); err != nil {
 		return WorkflowState{}, err
@@ -1985,6 +2005,32 @@ func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, itemKey, decisio
 		return WorkflowState{}, notWaitingOnYou(it.Key, state)
 	}
 
+	// A retry may replace the stored worktree list (same shape, validation and
+	// ownership as start): a tree removed since the workflow started would
+	// otherwise brief every later step on a dead path. Anything else is refused.
+	var newWTJSON any
+	if len(in.Worktrees) > 0 {
+		if decision != "retry" {
+			return WorkflowState{}, &items.Error{Code: items.CodeBadRequest,
+				Message: `worktrees are only valid with decision "retry".`}
+		}
+		if err := s.validateWorktrees(ctx, in.Worktrees); err != nil {
+			return WorkflowState{}, err
+		}
+		if err := s.checkWorkflowWorktreeOwnership(ctx, it, in.Worktrees, orch.ID, "Resume"); err != nil {
+			return WorkflowState{}, err
+		}
+		raw, err := json.Marshal(in.Worktrees)
+		if err != nil {
+			return WorkflowState{}, err
+		}
+		wf.WorktreesJSON = string(raw)
+		if err := s.preflightBriefs(ctx, orch, it, wf); err != nil {
+			return WorkflowState{}, err
+		}
+		newWTJSON = wf.WorktreesJSON
+	}
+
 	var resumeSpec workflow.Spec
 	if it.Workflow != nil {
 		if resumeSpec, err = s.engineSpec(ctx, it, wf.OwnerAgentID); err != nil {
@@ -2009,8 +2055,9 @@ func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, itemKey, decisio
 			// guarded flips -- a concurrent resume (or a fresh escalation
 			// racing this one) must not double-apply.
 			res, err := tx.ExecContext(ctx, `UPDATE workflows SET state = 'running', round = ?,
-				extra_rounds = extra_rounds + 1, escalation = NULL, updated_at = ? WHERE id = ? AND state = 'escalated'`,
-				newRound, db.Millis(s.now()), wf.ID)
+				extra_rounds = extra_rounds + 1, escalation = NULL, worktrees_json = COALESCE(?, worktrees_json),
+				updated_at = ? WHERE id = ? AND state = 'escalated'`,
+				newRound, newWTJSON, db.Millis(s.now()), wf.ID)
 			if err != nil {
 				return err
 			}

@@ -528,7 +528,7 @@ func TestSwarmWorkflowIdempotentResumeLostRace(t *testing.T) {
 	}, 1)
 
 	go func() {
-		st, err := s.RT.ResumeWorkflow(ctx, orch, seed.TaskKey, "retry", "lost race note", seed.Caller.SessionID, reqID)
+		st, err := s.RT.ResumeWorkflow(ctx, orch, runtime.ResumeWorkflowInput{ItemKey: seed.TaskKey, Decision: "retry", Note: "lost race note", SessionID: seed.Caller.SessionID, RequestID: reqID})
 		resCh <- struct {
 			st  runtime.WorkflowState
 			err error
@@ -556,7 +556,7 @@ func TestSwarmWorkflowIdempotentResumeLostRace(t *testing.T) {
 	}
 
 	// Idempotency replay with the same request_id must return the same state
-	replay, err := s.RT.ResumeWorkflow(ctx, orch, seed.TaskKey, "retry", "lost race note", seed.Caller.SessionID, reqID)
+	replay, err := s.RT.ResumeWorkflow(ctx, orch, runtime.ResumeWorkflowInput{ItemKey: seed.TaskKey, Decision: "retry", Note: "lost race note", SessionID: seed.Caller.SessionID, RequestID: reqID})
 	if err != nil {
 		t.Fatalf("ResumeWorkflow idempotent replay err = %v", err)
 	}
@@ -628,7 +628,7 @@ func TestSwarmWorkflowResumeConcurrentRace(t *testing.T) {
 		go func(note, rID string) {
 			defer wg.Done()
 			<-startCh
-			st, err := s.RT.ResumeWorkflow(ctx, orch, seed.TaskKey, "retry", note, seed.Caller.SessionID, rID)
+			st, err := s.RT.ResumeWorkflow(ctx, orch, runtime.ResumeWorkflowInput{ItemKey: seed.TaskKey, Decision: "retry", Note: note, SessionID: seed.Caller.SessionID, RequestID: rID})
 			resCh <- callRes{reqID: rID, st: st, err: err}
 		}(fmt.Sprintf("note %d", i), reqID)
 	}
@@ -647,7 +647,7 @@ func TestSwarmWorkflowResumeConcurrentRace(t *testing.T) {
 		if r.st.State != "running" || r.st.ID != startRes.Workflow {
 			t.Fatalf("expected running state for %s, got %+v", r.reqID, r.st)
 		}
-		replay, err := s.RT.ResumeWorkflow(ctx, orch, seed.TaskKey, "retry", "replay note", seed.Caller.SessionID, r.reqID)
+		replay, err := s.RT.ResumeWorkflow(ctx, orch, runtime.ResumeWorkflowInput{ItemKey: seed.TaskKey, Decision: "retry", Note: "replay note", SessionID: seed.Caller.SessionID, RequestID: r.reqID})
 		if err != nil {
 			t.Fatalf("replay failed for %s: %v", r.reqID, err)
 		}

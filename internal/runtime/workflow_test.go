@@ -1116,7 +1116,7 @@ func TestResumeAccept(t *testing.T) {
 		t.Fatalf("setup: state = %+v ok=%v err=%v, want escalated", escalated, ok, err)
 	}
 
-	final, err := s.ResumeWorkflow(ctx, orch, taskKey, "accept", "", "", "")
+	final, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "accept", Note: "", SessionID: "", RequestID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1144,7 +1144,7 @@ func TestResumeFail(t *testing.T) {
 	}
 	escalateViaRoundsExhausted(t, s, orch, taskKey, st.ID, head)
 
-	final, err := s.ResumeWorkflow(ctx, orch, taskKey, "fail", "", "", "")
+	final, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "fail", Note: "", SessionID: "", RequestID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1169,7 +1169,7 @@ func TestResumeRefusedWhenNotEscalated(t *testing.T) {
 		Worktrees: []WorkflowWorktree{{WorktreeID: wtID, Mode: "rw"}}}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", "", "", "")
+	_, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "", SessionID: "", RequestID: ""})
 	want := fmt.Sprintf("%s's workflow isn't waiting on you (state: running).", taskKey)
 	if err == nil || err.Error() != want {
 		t.Fatalf("err = %v, want %q", err, want)
@@ -1188,7 +1188,7 @@ func TestResumeRetryGrantsExtraRound(t *testing.T) {
 	}
 	coderAgentID := escalateViaRoundsExhausted(t, s, orch, taskKey, st.ID, head)
 
-	final, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", "please double check the edge case", "", "")
+	final, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "please double check the edge case", SessionID: "", RequestID: ""})
 
 	if err != nil {
 		t.Fatal(err)
@@ -1601,7 +1601,7 @@ func TestResumeRetryMixedFailureAndChangesRequested(t *testing.T) {
 		t.Fatalf("setup: state = %+v ok=%v err=%v, want escalated", escalated, ok, err)
 	}
 
-	final, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", "", "", "")
+	final, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "", SessionID: "", RequestID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1944,7 +1944,7 @@ func TestShareFailureDoesNotDoubleSpawn(t *testing.T) {
 	}
 	startedBefore := len(tm.started)
 
-	final, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", "", "", "")
+	final, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "", SessionID: "", RequestID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2170,7 +2170,7 @@ func TestResumeCancelRefuseForeignOrchestrator(t *testing.T) {
 	}
 
 	want := taskKey + " is outside your assignment."
-	if _, err := s.ResumeWorkflow(ctx, foreign, taskKey, "retry", "", "", ""); err == nil || err.Error() != want {
+	if _, err := s.ResumeWorkflow(ctx, foreign, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "", SessionID: "", RequestID: ""}); err == nil || err.Error() != want {
 		t.Fatalf("resume err = %v, want %q", err, want)
 	}
 	if _, err := s.CancelWorkflow(ctx, foreign, taskKey, "", ""); err == nil || err.Error() != want {
@@ -2482,7 +2482,7 @@ func TestResumeRetryAfterBlocked(t *testing.T) {
 	// Spawn{build, Round:2, Findings:[]} -- the round-1 blocked verdict's
 	// findings never reached the fresh builder at all, since a fresh spawn
 	// has no prior brief to update and no session to message.
-	final, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", "please pick JWT", "", "")
+	final, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "please pick JWT", SessionID: "", RequestID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2541,7 +2541,7 @@ func TestResumeRetryDeliversFindingsAndNoteWhenBriefContextTruncated(t *testing.
 	}
 
 	note := "please pick JWT. " + strings.Repeat("Keep the token refresh path covered by a test. ", 130) + "END-OF-NOTE"
-	if _, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", note, "", ""); err != nil {
+	if _, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: note, SessionID: "", RequestID: ""}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3144,7 +3144,7 @@ func TestWorkflowIdempotencyStartResumeCancel(t *testing.T) {
 	escalateViaRoundsExhausted(t, s, orch, taskKey, st1.ID, head)
 
 	reqResume := "req-wf-resume-1"
-	resSt1, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", "try again", sessID, reqResume)
+	resSt1, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "try again", SessionID: sessID, RequestID: reqResume})
 	if err != nil {
 		t.Fatalf("ResumeWorkflow err = %v", err)
 	}
@@ -3159,7 +3159,7 @@ func TestWorkflowIdempotencyStartResumeCancel(t *testing.T) {
 	}
 
 	// Replay must succeed and return same state, not fail with "isn't waiting on you"
-	resSt2, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", "try again", sessID, reqResume)
+	resSt2, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "try again", SessionID: sessID, RequestID: reqResume})
 	if err != nil {
 		t.Fatalf("ResumeWorkflow replay err = %v", err)
 	}
@@ -3311,7 +3311,7 @@ func TestBriefTooLongMidWorkflowEscalatesWithoutAutoRetry(t *testing.T) {
 	}
 
 	setBrief(100)
-	final, err := s.ResumeWorkflow(ctx, orch, taskKey, "retry", "", "", "")
+	final, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "", SessionID: "", RequestID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
