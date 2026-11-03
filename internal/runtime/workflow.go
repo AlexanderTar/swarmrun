@@ -2029,6 +2029,19 @@ func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, in ResumeWorkflo
 			return WorkflowState{}, err
 		}
 		newWTJSON = wf.WorktreesJSON
+	} else if decision == "retry" {
+		// Nothing replaces the stored list, so every tree in it must still be
+		// there: refuse now, naming it, rather than re-escalate on the next step.
+		for _, w := range wf.worktrees() {
+			if _, err := s.liveWorktreePath(ctx, w.WorktreeID); err != nil {
+				var ie *items.Error
+				if errors.As(err, &ie) {
+					return WorkflowState{}, &items.Error{Code: items.CodeBadRequest,
+						Message: ie.Message + " Pass worktrees to replace the workflow's worktrees."}
+				}
+				return WorkflowState{}, err
+			}
+		}
 	}
 
 	var resumeSpec workflow.Spec

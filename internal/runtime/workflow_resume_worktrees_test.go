@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -143,5 +144,32 @@ func TestResumeAcceptFailRefuseWorktrees(t *testing.T) {
 	}
 	if wf, _, _ := s.WorkflowFor(ctx, "STORY-1"); wf.State != "escalated" {
 		t.Fatalf("workflow state = %s, want still escalated", wf.State)
+	}
+}
+
+func TestResumeRetryRefusesGoneStoredWorktreeAtResumeTime(t *testing.T) {
+	s, orch, _, oldWT, oldDir := escalatedStoryReview(t)
+	ctx := context.Background()
+	removeWorktree(t, s, oldWT, oldDir)
+
+	_, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: "STORY-1", Decision: "retry"})
+	if err == nil {
+		t.Fatal("resume retry with a gone stored tree and no worktrees must be refused")
+	}
+	var ie *items.Error
+	if !errors.As(err, &ie) || ie.Code != items.CodeBadRequest {
+		t.Fatalf("err = %v, want bad_request", err)
+	}
+	if !strings.Contains(err.Error(), oldWT) || !strings.Contains(err.Error(), "worktrees") {
+		t.Fatalf("err = %q, want it to name %s and tell the caller to pass worktrees", err, oldWT)
+	}
+	got, _, _ := s.WorkflowFor(ctx, "STORY-1")
+	if got.State != "escalated" || got.ExtraRounds != 0 {
+		t.Fatalf("refused resume changed the workflow: state %s extra_rounds %d", got.State, got.ExtraRounds)
+	}
+
+	// accept/fail do not brief anything, so a gone tree does not stop them.
+	if _, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: "STORY-1", Decision: "accept"}); err != nil {
+		t.Fatalf("accept with a gone stored tree: %v", err)
 	}
 }
