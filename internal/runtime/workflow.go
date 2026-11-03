@@ -2032,8 +2032,10 @@ func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, in ResumeWorkflo
 	} else if decision == "retry" {
 		// Nothing replaces the stored list, so every tree in it must still be
 		// there: refuse now, naming it, rather than re-escalate on the next step.
+		// Only the directory matters, as in BriefWorktrees (a non-active tree
+		// that is still on disk briefs fine).
 		for _, w := range wf.worktrees() {
-			if _, err := s.liveWorktreePath(ctx, w.WorktreeID); err != nil {
+			if _, err := s.checkWorktreePath(ctx, w.WorktreeID, false); err != nil {
 				var ie *items.Error
 				if errors.As(err, &ie) {
 					return WorkflowState{}, &items.Error{Code: items.CodeBadRequest,
