@@ -60,3 +60,29 @@ func TestSubagentPreToolUseIsStillBlockedByPolicy(t *testing.T) {
 		t.Fatalf("subagent Workflow call: want deny, got %s", out)
 	}
 }
+
+// Claude Code fires PostToolUseFailure, not PostToolUse, for a tool that failed
+// or was denied. It closes the open call like PostToolUse does; without it the
+// call stays open and the session reads busy until the turn ends.
+func TestPostToolUseFailureClosesTheOpenToolCall(t *testing.T) {
+	h, ses := seed(t, 0, runtime.Running)
+	ctx := context.Background()
+	for _, step := range []struct{ ev, body string }{
+		{"UserPromptSubmit", `{"session_id":"p1","prompt":"hi"}`},
+		{"PreToolUse", `{"session_id":"p1","tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}`},
+	} {
+		if _, err := h.Handle(ctx, runtime.Claude, step.ev, ses, []byte(step.body)); err != nil {
+			t.Fatalf("%s: %v", step.ev, err)
+		}
+	}
+	if _, busy := h.RT.BusyNow(ses); !busy {
+		t.Fatal("test setup: an open tool call should read busy")
+	}
+	if _, err := h.Handle(ctx, runtime.Claude, "PostToolUseFailure", ses,
+		[]byte(`{"session_id":"p1","tool_name":"Read","tool_input":{"file_path":"/tmp/x"},"error":"not found"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, busy := h.RT.BusyNow(ses); busy {
+		t.Fatal("PostToolUseFailure left the tool call open")
+	}
+}

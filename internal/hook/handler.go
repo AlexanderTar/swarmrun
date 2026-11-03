@@ -409,6 +409,8 @@ func normalize(kind runtime.AgentKind, event string) string {
 		return "PreToolUse"
 	case "posttooluse", "postinvocation":
 		return "PostToolUse"
+	case "posttoolusefailure":
+		return "PostToolUseFailure"
 	case "permissionrequest":
 		return "PermissionRequest"
 	case "precompact":
@@ -763,7 +765,7 @@ func (h *Handler) Handle(ctx context.Context, kind runtime.AgentKind, event, ses
 		switch {
 		case ev == "PreToolUse" && !d.Block:
 			h.RT.ToolStarted(s.ID)
-		case ev == "PostToolUse":
+		case ev == "PostToolUse", ev == "PostToolUseFailure":
 			h.RT.ToolFinished(s.ID)
 		// A cursor queued follow-up fires beforeSubmitPrompt while a tool still runs
 		// (probe 2026-10-29), so for cursor it is no turn boundary: stop and

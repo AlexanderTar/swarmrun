@@ -63,8 +63,9 @@ func (s *Store) ToolStarted(sessionID string) {
 	b.tools++
 }
 
-// ToolFinished records a PostToolUse. Claude's PostToolUseFailure is not a
-// registered hook, so a failed tool keeps its call open until the turn ends
+// ToolFinished records a PostToolUse or Claude's PostToolUseFailure (a failed or
+// denied tool). A call whose end hook never comes (a cancelled tool, or one
+// of a subagent that fires no end hook) stays open until the turn ends
 // (TurnEnded) or the ceiling; the worst case is a busy label on a turn that is
 // in fact still running.
 func (s *Store) ToolFinished(sessionID string) {
