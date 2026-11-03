@@ -744,7 +744,13 @@ func (h *Handler) Handle(ctx context.Context, kind runtime.AgentKind, event, ses
 	// an open tool call is what marks a worker busy, not stuck (runtime/busy.go);
 	// a denied PreToolUse never runs, and a turn end or new prompt closes any
 	// call whose PostToolUse was lost
-	if h.RT != nil {
+	if h.RT != nil && in.AgentID != "" {
+		// A hook inside a Claude subagent or fork (post-turn memory extraction,
+		// say) is not the main agent's turn: its PreToolUse after Stop used to
+		// reopen the turn, and a lost PostToolUse left a tool open, so the
+		// finished session never read idle. decide() above still applied.
+		h.logf("hook: %s %s from subagent %s on %s: main turn and busy state unchanged", ev, in.ToolName, in.AgentID, s.ID)
+	} else if h.RT != nil {
 		// A real Stop is on the hook record before TurnEnded. Otherwise a long
 		// tool with no hook for hookTurnStale looks like an interrupted open
 		// call, and the nudge idle mark jumps back to the tool start. A wake

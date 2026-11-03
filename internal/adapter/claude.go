@@ -566,7 +566,17 @@ func (c *Claude) HookOutput(event string, d HookDecision) ([]byte, error) {
 }
 
 func (c *Claude) ParseHook(event string, stdin []byte) (HookInput, error) {
-	return parseClaudeHook(event, stdin)
+	in, err := parseClaudeHook(event, stdin)
+	if err != nil || len(stdin) == 0 {
+		return in, err
+	}
+	// grok shares parseClaudeHook but its hooks have no agent_id contract.
+	var extra struct {
+		AgentID string `json:"agent_id"`
+	}
+	_ = json.Unmarshal(stdin, &extra)
+	in.AgentID = extra.AgentID
+	return in, nil
 }
 
 // parseClaudeHook reads the Claude-shaped hook stdin; grok sends the same
