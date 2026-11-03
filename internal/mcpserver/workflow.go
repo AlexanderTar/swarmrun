@@ -29,6 +29,20 @@ func workflowStateOut(st runtime.WorkflowState) map[string]any {
 	}
 }
 
+// resolveWorkflowWorktrees turns the wire worktree refs into ids, as start and
+// resume retry both need.
+func resolveWorkflowWorktrees(ctx context.Context, s *Server, in []workflowWorktreeWire) ([]runtime.WorkflowWorktree, error) {
+	wts := make([]runtime.WorkflowWorktree, len(in))
+	for i, w := range in {
+		id, err := s.RT.ResolveWorktreeRef(ctx, w.Worktree)
+		if err != nil {
+			return nil, err
+		}
+		wts[i] = runtime.WorkflowWorktree{WorktreeID: id, Mode: w.Mode}
+	}
+	return wts, nil
+}
+
 // workflowTool implements the swarm_workflow MCP tool (Spec B7).
 func workflowTool(s *Server) ToolDef {
 	return ToolDef{
@@ -108,16 +122,9 @@ func workflowTool(s *Server) ToolDef {
 				if err := promoteDraft(ctx, s, it, items.Orchestrator(orch.ID, orch.RootItemID)); err != nil {
 					return nil, err
 				}
-				wts := make([]runtime.WorkflowWorktree, len(in.Worktrees))
-				for i, w := range in.Worktrees {
-					id, err := s.RT.ResolveWorktreeRef(ctx, w.Worktree)
-					if err != nil {
-						return nil, err
-					}
-					wts[i] = runtime.WorkflowWorktree{
-						WorktreeID: id,
-						Mode:       w.Mode,
-					}
+				wts, err := resolveWorkflowWorktrees(ctx, s, in.Worktrees)
+				if err != nil {
+					return nil, err
 				}
 				st, err := s.RT.StartWorkflow(ctx, orch, runtime.StartWorkflowInput{
 					ItemKey:   in.Item,
@@ -149,7 +156,12 @@ func workflowTool(s *Server) ToolDef {
 				if err != nil {
 					return nil, err
 				}
-				st, err := s.RT.ResumeWorkflow(ctx, orch, runtime.ResumeWorkflowInput{ItemKey: in.Item, Decision: in.Decision, Note: in.Note, SessionID: c.SessionID, RequestID: in.RequestID})
+				wts, err := resolveWorkflowWorktrees(ctx, s, in.Worktrees)
+				if err != nil {
+					return nil, err
+				}
+				st, err := s.RT.ResumeWorkflow(ctx, orch, runtime.ResumeWorkflowInput{ItemKey: in.Item, Decision: in.Decision,
+					Note: in.Note, Worktrees: wts, SessionID: c.SessionID, RequestID: in.RequestID})
 				if err != nil {
 					return nil, err
 				}

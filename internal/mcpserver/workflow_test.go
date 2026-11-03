@@ -886,3 +886,71 @@ func TestSwarmWorkflowStatusShowsAPausedRunAgent(t *testing.T) {
 		t.Fatalf("runs = %+v, want agent_session_state paused", res.Runs)
 	}
 }
+
+// TestSwarmWorkflowResumeRetryReplacesWorktrees: op:"resume" reads worktrees,
+// resolves refs like start does, and hands them to the runtime, which stores
+// them as the workflow's new list; with accept/fail they are refused.
+func TestSwarmWorkflowResumeRetryReplacesWorktrees(t *testing.T) {
+	s, seed := newOrchestratorServer(t)
+	ctx := context.Background()
+	createWT := func(branch string) string {
+		out, err := s.call(ctx, seed.Caller, "swarm_worktree", fmt.Sprintf(
+			`{"op":"create","repo":"%s","branch":"%s","base":"main"}`, seed.RepoID, branch))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var res struct {
+			ID string `json:"worktree_id"`
+		}
+		if err := json.Unmarshal(mustJSON(out), &res); err != nil {
+			t.Fatal(err)
+		}
+		return res.ID
+	}
+	first, second := createWT("wf-first"), createWT("wf-second")
+	if _, err := s.RT.Items.Update(ctx, seed.TaskKey, items.Patch{
+		Workflow: &workflow.Spec{Template: "mechanical"}, Steps: &[]string{"step 1"}, Verify: &[]string{"true"}, Revision: 1,
+	}, items.Daemon()); err != nil {
+		t.Fatal(err)
+	}
+	startOut, err := s.call(ctx, seed.Caller, "swarm_workflow", fmt.Sprintf(
+		`{"op":"start","item":"%s","worktrees":[{"worktree":"%s","mode":"rw"}]}`, seed.TaskKey, first))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started struct {
+		Workflow string `json:"workflow"`
+	}
+	if err := json.Unmarshal(mustJSON(startOut), &started); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RT.DB.ExecContext(ctx, `UPDATE workflows SET state = 'escalated', escalation = 'review failed' WHERE id = ?`, started.Workflow); err != nil {
+		t.Fatal(err)
+	}
+	stored := func() string {
+		var raw string
+		if err := s.RT.DB.QueryRowContext(ctx, `SELECT worktrees_json FROM workflows WHERE id = ?`, started.Workflow).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+
+	for _, decision := range []string{"accept", "fail"} {
+		_, err := s.call(ctx, seed.Caller, "swarm_workflow", fmt.Sprintf(
+			`{"op":"resume","item":"%s","decision":"%s","worktrees":[{"worktree":"%s","mode":"rw"}]}`, seed.TaskKey, decision, second))
+		if err == nil || !strings.Contains(err.Error(), `only valid with decision "retry"`) {
+			t.Fatalf("%s with worktrees err = %v, want refusal", decision, err)
+		}
+	}
+	if strings.Contains(stored(), second) {
+		t.Fatalf("a refused resume changed the stored worktrees: %s", stored())
+	}
+
+	if _, err := s.call(ctx, seed.Caller, "swarm_workflow", fmt.Sprintf(
+		`{"op":"resume","item":"%s","decision":"retry","worktrees":[{"worktree":"%s","mode":"rw"}]}`, seed.TaskKey, second)); err != nil {
+		t.Fatalf("resume retry with worktrees: %v", err)
+	}
+	if got := stored(); !strings.Contains(got, second) || strings.Contains(got, first) {
+		t.Fatalf("stored worktrees = %s, want only %s", got, second)
+	}
+}
