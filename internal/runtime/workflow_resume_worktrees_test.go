@@ -173,3 +173,22 @@ func TestResumeRetryRefusesGoneStoredWorktreeAtResumeTime(t *testing.T) {
 		t.Fatalf("accept with a gone stored tree: %v", err)
 	}
 }
+
+func TestResumeRetryRefusesStoredWorktreeWithNoRow(t *testing.T) {
+	s, orch, wfID, _, _ := escalatedStoryReview(t)
+	ctx := context.Background()
+	const missing = "wt_missing_row"
+	if _, err := s.DB.ExecContext(ctx, `UPDATE workflows SET worktrees_json = ? WHERE id = ?`,
+		`[{"worktree_id":"`+missing+`","mode":"ro"}]`, wfID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: "STORY-1", Decision: "retry"})
+	var ie *items.Error
+	if !errors.As(err, &ie) || ie.Code != items.CodeBadRequest {
+		t.Fatalf("err = %v, want bad_request", err)
+	}
+	if !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "worktrees") {
+		t.Fatalf("err = %q, want it to name %s and tell the caller to pass worktrees", err, missing)
+	}
+}

@@ -1963,10 +1963,10 @@ func (s *Store) deliverNote(ctx context.Context, agentID, note string) error {
 }
 
 // ResumeWorkflow is swarm_workflow op:"resume" (spec B7). orch is the
-// calling orchestrator (unused beyond validating the call reaches an
-// escalated workflow -- ownership isn't re-checked here the way Start's is,
-// since only the workflow's own owner can ever see it escalated to them in
-// the first place via their inbox relay).
+// calling orchestrator: the item must be in its root, and when a retry passes
+// worktrees they replace the stored list after the same validation and
+// ownership checks Start runs. A retry without worktrees is refused when a
+// stored tree is gone.
 func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, in ResumeWorkflowInput) (WorkflowState, error) {
 	itemKey, decision, note, sessionID, requestID := in.ItemKey, in.Decision, in.Note, in.SessionID, in.RequestID
 	var st WorkflowState
@@ -2036,6 +2036,10 @@ func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, in ResumeWorkflo
 		// that is still on disk briefs fine).
 		for _, w := range wf.worktrees() {
 			if _, err := s.checkWorktreePath(ctx, w.WorktreeID, false); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return WorkflowState{}, &items.Error{Code: items.CodeBadRequest,
+						Message: fmt.Sprintf("worktree %s is gone (no record). Pass worktrees to replace the workflow's worktrees.", w.WorktreeID)}
+				}
 				var ie *items.Error
 				if errors.As(err, &ie) {
 					return WorkflowState{}, &items.Error{Code: items.CodeBadRequest,
