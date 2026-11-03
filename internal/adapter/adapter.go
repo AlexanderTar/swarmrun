@@ -85,16 +85,19 @@ type HookDecision struct {
 // HookInput is what ParseHook extracts from an agent's hook stdin.
 type HookInput struct {
 	ProviderSessionID string
-	Event             string
-	ToolName          string
-	Command           string
-	IsSwarmTool       bool
-	Source            string
-	TranscriptPath    string
-	Cwd               string
-	RawToolInput      []byte
-	ToolResponse      []byte
-	Prompt            string // UserPromptSubmit text; empty for adapters that don't send it
+	// AgentID is set only when the hook fired inside a Claude subagent or
+	// fork; the main agent's hooks carry none.
+	AgentID        string
+	Event          string
+	ToolName       string
+	Command        string
+	IsSwarmTool    bool
+	Source         string
+	TranscriptPath string
+	Cwd            string
+	RawToolInput   []byte
+	ToolResponse   []byte
+	Prompt         string // UserPromptSubmit text; empty for adapters that don't send it
 	// Model is the live model id the agent's hook reported (raw: may be a
 	// launch slug, alias or dated id); Effort is set only where the hook
 	// carries it separately. Both empty when the hook says nothing.

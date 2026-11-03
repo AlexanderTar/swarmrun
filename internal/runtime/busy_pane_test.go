@@ -491,3 +491,41 @@ func TestNudgeKeepsTheClockThroughALongThink(t *testing.T) {
 		t.Fatalf("tool, then a 6h think, then another tool: %d nudges, want 1", n)
 	}
 }
+
+// A session that already wrote its completed checkpoint is finished, not slow:
+// a stray open tool call (a post-Stop hook with no matching end) must not earn
+// it a "write a progress checkpoint" reminder.
+func TestNudgeSkipsASessionWithACompletedCheckpoint(t *testing.T) {
+	s, tm, at := clockStore(t)
+	ctx := context.Background()
+	_, _, wSes := worker(t, s)
+	w, _ := s.agentByID(ctx, wSes.AgentID)
+	tm.env[w.Name] = map[string]string{"SWARM_SESSION": wSes.ID}
+	panes(tm, Pane{Session: w.Name, Command: "zsh"})
+	tm.captures[w.Name] = []string{"working…\n"}
+	s.WriteCheckpoint(ctx, wSes.ID, CheckpointInput{Kind: Accepted, Summary: "starting"})
+	mustExec(t, s.DB, `UPDATE items SET tdd_exempt = 'docs' WHERE key = 'TASK-1'`)
+	if _, err := s.WriteCheckpoint(ctx, wSes.ID, CheckpointInput{Kind: CompletedCkp, Summary: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	s.ToolStarted(wSes.ID)
+	at.Advance(progressNudgeAfter)
+	rows, err := s.liveSessionRows(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.SessionID != wSes.ID {
+			continue
+		}
+		if r.CompletedCheckpointAt == nil {
+			t.Fatal("test setup: the worker has no completed checkpoint")
+		}
+		if err := s.nudgeProgress(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := nudgeCount(s, w.ID); n != 0 {
+		t.Fatalf("completed session got %d progress nudges, want 0", n)
+	}
+}
