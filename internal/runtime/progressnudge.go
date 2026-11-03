@@ -23,10 +23,12 @@ const progressNudgeNote = "You have been working for a while without a checkpoin
 // tool call cannot read it, so a second would only stack behind the first.
 // The reminder is an ordinary assignment_update, so it rides the usual wake and
 // hook-notice path and never interrupts a turn. Nothing goes to a worker that is
-// pausing or whose kind is out of usage. The window is read back from the
+// pausing, has already written a completed checkpoint, or whose kind is out of usage. The window is read back from the
 // messages table, so a daemon restart does not repeat a reminder.
 func (s *Store) nudgeProgress(ctx context.Context, r liveRow) error {
-	if r.State != Running {
+	// A session that wrote its completed checkpoint is finished: whatever still
+	// reads as busy is a stray hook, and the reminder would wake it for nothing.
+	if r.State != Running || r.CompletedCheckpointAt != nil {
 		return nil
 	}
 	last := r.StartedAt
