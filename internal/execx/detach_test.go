@@ -3,9 +3,12 @@ package execx
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func waitDone(t *testing.T, d *Detached) {
@@ -30,25 +33,44 @@ func TestStartDetachedReportsAFailureWithItsStderr(t *testing.T) {
 }
 
 func TestStartDetachedRunsInItsOwnSessionWithoutADeadline(t *testing.T) {
-	out := filepath.Join(t.TempDir(), "ids")
-	// A session leader's session id is its own pid.
-	d, err := StartDetached(nil, "sh", "-c", `sleep 0.2; ps -o sid= -p $$ > "$0"; echo $$ >> "$0"`, out)
+	out := filepath.Join(t.TempDir(), "pid")
+	// The child records its pid, then stays alive long enough to be asked for
+	// its session id. Getsid works on Linux and macOS alike; `ps -o sid` does
+	// not exist on macOS.
+	d, err := StartDetached(nil, "sh", "-c", `echo $$ > "$0.tmp" && mv "$0.tmp" "$0"; sleep 1`, out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-d.Done:
-		t.Fatal("exited before its sleep")
-	case <-time.After(50 * time.Millisecond):
+	var pid int
+	deadline := time.Now().Add(5 * time.Second)
+	for pid == 0 {
+		if b, err := os.ReadFile(out); err == nil {
+			if pid, err = strconv.Atoi(strings.TrimSpace(string(b))); err != nil {
+				t.Fatalf("pid file = %q: %v", b, err)
+			}
+			break
+		}
+		select {
+		case <-d.Done:
+			t.Fatalf("exited before writing its pid: %v", d.Err())
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the detached process never wrote its pid")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// A session leader's session id is its own pid.
+	sid, err := unix.Getsid(pid)
+	if err != nil {
+		t.Fatalf("getsid(%d): %v", pid, err)
+	}
+	if sid != pid {
+		t.Fatalf("sid = %d, pid = %d, want the process to lead its own session", sid, pid)
 	}
 	waitDone(t, d)
 	if err := d.Err(); err != nil {
 		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(out)
-	f := strings.Fields(string(b))
-	if len(f) != 2 || f[0] != f[1] {
-		t.Fatalf("sid/pid = %q, want the process to lead its own session", b)
 	}
 }
 
