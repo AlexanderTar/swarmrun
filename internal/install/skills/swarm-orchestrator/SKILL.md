@@ -95,7 +95,7 @@ Use these when a deterministic rule blocks work that is genuinely fine to procee
 - Consult your advisor at each of these points:
   - once you understand the request, before proposing approaches;
   - before sending the first spec section for approval;
-  - before sending the plan (or debug report) for approval, including the `swarm-tree` breakdown;
+  - before sending the plan (or debug report) for approval, including any `swarm-tree` breakdown;
   - in debug spikes, before you commit to a root cause.
   - Consult your advisor when you review a complex worker report, before you accept it or re-dispatch:
     a completed or failed checkpoint with findings, a review with disagreements or blocking findings,
