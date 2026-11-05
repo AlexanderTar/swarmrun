@@ -274,11 +274,14 @@ func checkTreeShape(t Tree, rootType items.Type) error {
 	return validateTreeShape(t)
 }
 
+// errMissingTree is ParseTree's refusal when a plan or a spike report has no swarm-tree.
+const errMissingTree = "tree_invalid: the plan needs one ```swarm-tree block under \"## Work breakdown\"."
+
 // ParseTree parses and validates one ```swarm-tree block (I10, L4).
 func ParseTree(md string) (Tree, error) {
 	blocks := findSwarmTreeBlocks(md)
 	if len(blocks) == 0 {
-		return Tree{}, errors.New("tree_invalid: the plan needs one ```swarm-tree block under \"## Work breakdown\".")
+		return Tree{}, errors.New(errMissingTree)
 	}
 	if len(blocks) > 1 {
 		return Tree{}, errors.New("tree_invalid: two swarm-tree blocks; there must be exactly one")
@@ -414,17 +417,25 @@ func (s *Store) RegisterArtifact(ctx context.Context, sessionID, op, itemKey, ki
 	sections := SplitSections(string(body))
 	var tree *Tree
 	warnings := []string{}
+	// A debug_report on a bug (any non-spike) may omit the tree. A plan, and a
+	// debug spike's report, still need one. A tree that is present is parsed
+	// and linted either way.
+	missingTree := false
 	if kind == "plan" || kind == "debug_report" {
-		t, err := ParseTree(string(body))
-		if err != nil {
-			return ArtifactResult{}, err
-		}
-		if lintErrors, lintWarnings := lintTree(t); len(lintErrors) > 0 {
-			return ArtifactResult{}, lintErrors[0]
+		if kind == "debug_report" && len(findSwarmTreeBlocks(string(body))) == 0 {
+			missingTree = true
 		} else {
-			warnings = lintWarnings
+			t, err := ParseTree(string(body))
+			if err != nil {
+				return ArtifactResult{}, err
+			}
+			if lintErrors, lintWarnings := lintTree(t); len(lintErrors) > 0 {
+				return ArtifactResult{}, lintErrors[0]
+			} else {
+				warnings = lintWarnings
+			}
+			tree = &t
 		}
-		tree = &t
 	}
 	var out ArtifactResult
 	_, err = IdemTx(ctx, s, sessionID, requestID, "swarm_artifact", &out, func(tx *sql.Tx) error {
@@ -442,6 +453,9 @@ func (s *Store) RegisterArtifact(ctx context.Context, sessionID, op, itemKey, ki
 		if it.RootID != a.RootItemID {
 			return &items.Error{Code: items.CodeBadRequest,
 				Message: fmt.Sprintf("%s is outside your assignment.", itemKey)}
+		}
+		if missingTree && it.Type == items.Spike {
+			return errors.New(errMissingTree)
 		}
 		if tree != nil {
 			if err := checkTreeRepos(ctx, tx, *tree); err != nil {

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/AlexanderTar/swarmrun/internal/items"
 )
 
 func TestSplitSections(t *testing.T) {
@@ -461,5 +463,80 @@ func TestRegisterPlanRefusesUnresolvableRepoRefs(t *testing.T) {
 	var n int
 	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM artifacts WHERE kind = 'plan'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("plan artifacts = %d, %v; want none", n, err)
+	}
+}
+
+const treelessReport = "# Report\n\n## Root cause\n\nthe cookie is dropped\n"
+
+func bugOrchestrator(t *testing.T, s *Store) (ses, key string) {
+	t.Helper()
+	it := seedTopLevelItem(t, s, items.Bug)
+	orch, _, err := s.StartOrchestrator(context.Background(), OrchestratorInput{ItemKey: it.Key, Kind: Fake, Model: "fake-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.LatestSession(context.Background(), orch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return session.ID, it.Key
+}
+
+// A debug_report on a bug root may omit the swarm-tree. Registering it stores
+// no tree and satisfies the completed gate.
+func TestDebugReportOnABugMayOmitTheTree(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	ses, key := bugOrchestrator(t, s)
+	res, err := s.RegisterArtifact(ctx, ses, "register", key, "debug_report", writeFile(t, treelessReport), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tree sql.NullString
+	if err := s.DB.QueryRowContext(ctx, `SELECT tree_json FROM artifact_revisions
+		WHERE artifact_id = ? AND revision = ?`, res.ArtifactID, res.Revision).Scan(&tree); err != nil {
+		t.Fatal(err)
+	}
+	if tree.Valid {
+		t.Fatalf("tree_json = %q, want none", tree.String)
+	}
+	if _, err := s.WriteCheckpoint(ctx, ses, CheckpointInput{Kind: CompletedCkp, Summary: "bug closed"}); err != nil {
+		t.Fatalf("completed must succeed once a tree-less debug_report is registered: %v", err)
+	}
+}
+
+func TestDebugReportOnABugStillRefusesAMalformedTree(t *testing.T) {
+	s, _, _ := newStore(t)
+	ses, key := bugOrchestrator(t, s)
+	_, err := s.RegisterArtifact(context.Background(), ses, "register", key, "debug_report",
+		writeFile(t, "# Report\n\n## Work breakdown\n\n```swarm-tree\n{not json}\n```\n"), "")
+	if err == nil || !strings.HasPrefix(err.Error(), "tree_invalid:") {
+		t.Fatalf("err = %v, want tree_invalid", err)
+	}
+}
+
+func TestDebugReportOnASpikeStillNeedsATree(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	key, a, _, err := s.StartSpike(ctx, SpikeInput{Name: "Find the crash", Intent: "debug", Kind: Fake, Model: "fake-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ses, _ := s.LatestSession(ctx, a.ID)
+	_, err = s.RegisterArtifact(ctx, ses.ID, "register", key, "debug_report", writeFile(t, treelessReport), "")
+	want := "tree_invalid: the plan needs one ```swarm-tree block under \"## Work breakdown\"."
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+}
+
+func TestPlanOnABugStillNeedsATree(t *testing.T) {
+	s, _, _ := newStore(t)
+	ses, key := bugOrchestrator(t, s)
+	_, err := s.RegisterArtifact(context.Background(), ses, "register", key, "plan",
+		writeFile(t, "# Plan\n\n## Work breakdown\n\nsome prose\n"), "")
+	want := "tree_invalid: the plan needs one ```swarm-tree block under \"## Work breakdown\"."
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
 	}
 }
