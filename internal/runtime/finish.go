@@ -24,6 +24,22 @@ func (s *Store) rootIsDone(ctx context.Context, q txQuerier, rootID string) (boo
 	return st == string(items.Done), err
 }
 
+// finalNoteWindow reports whether an orchestrator's completed is its final note:
+// the root is Done, or an approved finish (Merge set) already has its finishing
+// checkpoint recorded. The plan/report gate stands down in that window; before
+// finishing is recorded, completed is still refused.
+func (s *Store) finalNoteWindow(ctx context.Context, tx *sql.Tx, rootID string) (bool, error) {
+	done, err := s.rootIsDone(ctx, tx, rootID)
+	if err != nil || done {
+		return done, err
+	}
+	fa, ok, err := s.Items.FinishApprovalTx(ctx, tx, rootID)
+	if err != nil || !ok || fa.Merge == "" {
+		return false, err
+	}
+	return s.finishRecordedTx(ctx, tx, rootID, fa.CheckpointID)
+}
+
 // OnRootDone is items.Store.RootDone (spec locked decision 1, as amended by
 // CHORE-171): rootID just reached Done. Non-orchestrator agents still queued
 // or active on it finish: a spawning/running session gets a daemon-written

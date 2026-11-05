@@ -729,6 +729,68 @@ func TestCompletedRefusedAfterApprovedFinish(t *testing.T) {
 	_ = key
 }
 
+// rootWithApprovedFinish is finishFixture for a bug or an epic: integrated, the
+// finish approved, the root still not Done. finish records an open armed PR.
+func rootWithApprovedFinish(t *testing.T, typ items.Type, finish bool) (s *Store, ses, key string) {
+	t.Helper()
+	s, _, _ = newStore(t)
+	s.Items.RootDone = s.OnRootDone
+	ctx := context.Background()
+	mustExec(t, s.DB, `INSERT INTO repos (id, name, path, remote_url, remote_owner, default_branch, source, created_at, updated_at)
+		VALUES ('repo_proj', 'proj', '/tmp/proj', 'https://github.com/o/proj.git', 'o', 'main', 'manual', 1, 1)`)
+	it := seedTopLevelItem(t, s, typ)
+	orch, _, err := s.StartOrchestrator(ctx, OrchestratorInput{ItemKey: it.Key, Kind: Fake, Model: "fake-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ses = mustSessionID(t, s, orch.ID)
+	key = it.Key
+	if _, err := s.WriteCheckpoint(ctx, ses, CheckpointInput{Kind: Accepted, Summary: "looking"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.WriteCheckpoint(ctx, ses, CheckpointInput{Kind: Integrated, Summary: "merged",
+		Git:          []GitRef{{Repo: "proj", Branch: "swarm/chore-1", SHA: "3f9c2ab0000"}},
+		Verification: []Verify{{Cmd: "go test ./...", Phase: "green", OK: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, s.DB, `UPDATE requests SET state = 'approved', agent_id = ?, responded_at = 2,
+		binding_json = json_set(binding_json, '$.merge', 'auto')
+		WHERE item_id = ? AND kind IN ('accept_epic', 'accept_fix') AND state = 'open'`, orch.ID, it.ID)
+	if finish {
+		fakeGH(s, map[string]execx.Result{prView(prURL): {Out: ghOpenArmed}})
+		if _, err := finishPR(s, ses); err != nil {
+			t.Fatal(err)
+		}
+		if st := itemStatus(t, s, key); st == items.Done {
+			t.Fatal("root is Done; the open-PR window is gone")
+		}
+	}
+	return
+}
+
+// Between a recorded finishing and the root reaching Done, a bug with no
+// debug_report and an epic with no plan must accept the orchestrator's completed.
+func TestCompletedAcceptedAfterRecordedFinishWithoutArtifact(t *testing.T) {
+	const finishingRefusal = "The user approved the finish. Write a `finishing` checkpoint (prs, merged or kept), not `completed`."
+	for _, typ := range []items.Type{items.Bug, items.Epic} {
+		t.Run(string(typ), func(t *testing.T) {
+			s, ses, _ := rootWithApprovedFinish(t, typ, false)
+			ctx := context.Background()
+			_, err := s.WriteCheckpoint(ctx, ses, CheckpointInput{Kind: CompletedCkp, Summary: "too soon"})
+			if err == nil || !strings.Contains(err.Error(), finishingRefusal) {
+				t.Fatalf("before finishing: %v", err)
+			}
+			fakeGH(s, map[string]execx.Result{prView(prURL): {Out: ghOpenArmed}})
+			if _, err := finishPR(s, ses); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.WriteCheckpoint(ctx, ses, CheckpointInput{Kind: CompletedCkp, Summary: "note"}); err != nil {
+				t.Fatalf("completed after recorded finish, root not Done: %v", err)
+			}
+		})
+	}
+}
+
 // gitlessFixture: a root of the given intent whose orchestrator wrote integrated with verification and no git.
 func gitlessFixture(t *testing.T, intent string) (s *Store, ses, key string, err error) {
 	t.Helper()
