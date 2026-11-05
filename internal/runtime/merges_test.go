@@ -791,6 +791,21 @@ func TestCompletedAcceptedAfterRecordedFinishWithoutArtifact(t *testing.T) {
 	}
 }
 
+// The same window: the orchestrator's own open question does not block completed.
+func TestCompletedAcceptedAfterRecordedFinishWithOpenQuestion(t *testing.T) {
+	s, ses, _ := rootWithApprovedFinish(t, items.Bug, true)
+	ctx := context.Background()
+	var agentID, itemID string
+	if err := s.DB.QueryRowContext(ctx, `SELECT s.agent_id, a.item_id FROM sessions s JOIN agents a ON a.id = s.agent_id WHERE s.id = ?`, ses).Scan(&agentID, &itemID); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, s.DB, `INSERT INTO requests (id, kind, is_hitl, agent_id, session_id, item_id, prompt, state, created_at)
+		VALUES ('req_open_q', 'question', 1, ?, ?, ?, 'Which way?', 'open', 1)`, agentID, ses, itemID)
+	if _, err := s.WriteCheckpoint(ctx, ses, CheckpointInput{Kind: CompletedCkp, Summary: "note"}); err != nil {
+		t.Fatalf("completed after recorded finish with an open question: %v", err)
+	}
+}
+
 // gitlessFixture: a root of the given intent whose orchestrator wrote integrated with verification and no git.
 func gitlessFixture(t *testing.T, intent string) (s *Store, ses, key string, err error) {
 	t.Helper()

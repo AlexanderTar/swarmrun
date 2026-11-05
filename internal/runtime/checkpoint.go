@@ -1780,11 +1780,12 @@ func (s *Store) WriteCheckpoint(ctx context.Context, sessionID string, in Checkp
 			if err != nil {
 				return err
 			}
-			// CHORE-171: an orchestrator's final note on a Done root is not
-			// held back by its own open questions (it would be nudged forever).
+			// An orchestrator's final note is not held back by its own open
+			// questions once the root is Done, or once an approved finish
+			// is recorded and the root is not Done yet.
 			finalNote := false
 			if len(blocking) > 0 && a.Role == RoleOrchestrator {
-				if finalNote, err = s.rootIsDone(ctx, tx, a.RootItemID); err != nil {
+				if finalNote, err = s.finalNoteWindow(ctx, tx, a.RootItemID); err != nil {
 					return err
 				}
 			}

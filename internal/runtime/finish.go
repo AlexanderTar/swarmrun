@@ -26,8 +26,8 @@ func (s *Store) rootIsDone(ctx context.Context, q txQuerier, rootID string) (boo
 
 // finalNoteWindow reports whether an orchestrator's completed is its final note:
 // the root is Done, or an approved finish (Merge set) already has its finishing
-// checkpoint recorded. The plan/report gate stands down in that window; before
-// finishing is recorded, completed is still refused.
+// checkpoint recorded. The plan/report and open-question gates stand down in
+// that window; before finishing is recorded, completed is still refused.
 func (s *Store) finalNoteWindow(ctx context.Context, tx *sql.Tx, rootID string) (bool, error) {
 	done, err := s.rootIsDone(ctx, tx, rootID)
 	if err != nil || done {
