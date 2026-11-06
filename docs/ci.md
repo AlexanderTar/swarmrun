@@ -15,6 +15,7 @@
 | Menu bar app tests and coverage | macOS | `make test-menubar` (no generic `.sleep(for:` / `.sleep(until:` calls, `swift build -c release`, `swift test`, `apps/menubar/scripts/cover.sh`) |
 | End-to-end (fake adapter) | macOS | `make web-build`, then `scripts/e2e.sh` with `SWARM_E2E_PATH` set |
 | End-to-end (fake adapter, Linux) | ubuntu | `make web-build`, `brew install tmux`, then `scripts/e2e.sh` with `SWARM_E2E_PATH` set |
+| Site landing page | ubuntu | `shellcheck site/install.sh scripts/install-test.sh scripts/move-checkout.sh scripts/move-checkout-test.sh`, `scripts/install-test.sh`, `scripts/move-checkout-test.sh`, `node --test 'design/scripts/*.test.mjs' 'scripts/*.test.mjs'`, `scripts/rename-check.sh`, `scripts/site-check.sh` |
 
 The workflow sets `GO=go`. The Makefile itself uses `/opt/homebrew/bin/go` when it exists and `go` from PATH otherwise. On macOS `make build` and the install targets codesign; they never run in CI. The shared web setup (Node 22, pnpm 10, frozen-lockfile install, cached pnpm store) is `.github/actions/setup-web`.
 
