@@ -2,6 +2,7 @@ import { useId, useRef, useState } from "react";
 import { errorText } from "../api";
 import { AgentFields, type AgentFieldsValue } from "../components/AgentFields";
 import { RepoPicker } from "../components/RepoPicker";
+import { RequestField } from "../components/RequestField";
 import { Sheet } from "../components/Sheet";
 import { useToast } from "../components/Toast";
 import { Alert } from "../components/ui/alert";
@@ -23,7 +24,8 @@ import {
   submitLabel,
 } from "../logic/spawnForm";
 import { startedToast } from "../logic/toasts";
-import type { AgentCatalogEntry, AgentNode, Item, Settings } from "../types";
+import { useRequestAttachments } from "../logic/useRequestAttachments";
+import type { AgentCatalogEntry, AgentNode, Item, Settings, StartOrchestratorBody } from "../types";
 
 function Form(p: {
   item: Item;
@@ -43,8 +45,9 @@ function Form(p: {
   const [name, setName] = useState(() => defaultOrchestratorName(p.item.title));
   const [requestId, setRequestId] = useState(newRequestId);
   const [failure, setFailure] = useState<SubmitFailure>({});
+  const attachments = useRequestAttachments({ disabled: false });
   const start = useMutation(
-    (api, body: ReturnType<typeof orchestratorPayload>) => api.startOrchestrator(p.item.key, body),
+    (api, body: StartOrchestratorBody) => api.startOrchestrator(p.item.key, body),
     ["agents", "item:", "items"],
   );
   const busy = orchestratorsBusy(p.agents, p.settings);
@@ -67,7 +70,13 @@ function Form(p: {
     setFailure({});
     try {
       const agent = await start.run(
-        orchestratorPayload({ name, repos, fields }, p.item, p.settings, p.catalog, requestId),
+        await orchestratorPayload(
+          { name, repos, fields, request: attachments.request, images: attachments.images },
+          p.item,
+          p.settings,
+          p.catalog,
+          requestId,
+        ),
       );
       toast.success(startedToast(agent, p.item.key));
       p.onClose();
@@ -94,7 +103,10 @@ function Form(p: {
           <Button variant="secondary" onClick={p.onClose}>
             {C.cancel}
           </Button>
-          <Button disabled={!valid || !connected || start.pending} onClick={() => void submit()}>
+          <Button
+            disabled={!valid || !connected || start.pending || attachments.pending > 0}
+            onClick={() => void submit()}
+          >
             {failure.banner ? C.tryAgain : submitLabel(busy)}
           </Button>
         </>
@@ -121,6 +133,7 @@ function Form(p: {
         />
         {name !== "" && nameErr && <p className="text-xs text-destructive">{nameErr}</p>}
       </div>
+      <RequestField label={C.additionalRequest} state={attachments} />
     </Sheet>
   );
 }

@@ -264,6 +264,7 @@ export const C = {
   close: "Close",
   openDetails: "Item details",
   requestOptional: "Request (optional)",
+  additionalRequest: "Additional request (optional)",
   nameOptionalPlaceholder: "Optional if you write a request",
   nameOrRequestRequired: "Give a name or a request.",
   addImages: "Add files…",

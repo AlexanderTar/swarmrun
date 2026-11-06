@@ -51,6 +51,8 @@ export interface SpawnFormState {
   name: string;
   repos: string[];
   fields: AgentFieldsValue;
+  request?: string;
+  images?: { name: string; blob: Blob }[];
 }
 export interface SpikeFormState extends SpawnFormState {
   intent: SpikeIntent;
@@ -64,13 +66,13 @@ export interface SpikeFormState extends SpawnFormState {
 // catalog parameter and called advisorPayload with only 2 args, which doesn't typecheck against the
 // real 3-arg function. Threading catalog through here (rather than hardcoding `[]` inside this file)
 // keeps a real, non-empty settings.roles.advisor.effort from being silently dropped on every submit.
-export function orchestratorPayload(
+export async function orchestratorPayload(
   f: SpawnFormState,
   item: Item,
   settings: Settings,
   catalog: AgentCatalogEntry[],
   requestId: string,
-): StartOrchestratorBody {
+): Promise<StartOrchestratorBody> {
   const body: StartOrchestratorBody = {
     request_id: requestId,
     ...choicePayload(f.fields.choice),
@@ -81,6 +83,11 @@ export function orchestratorPayload(
   };
   if (f.fields.roles && Object.keys(f.fields.roles).length > 0) {
     body.roles = f.fields.roles;
+  }
+  const request = f.request?.trim();
+  if (request) body.request = request;
+  if (f.images && f.images.length > 0) {
+    body.attachments = await Promise.all(f.images.map(toAttachment));
   }
   return body;
 }

@@ -1,9 +1,30 @@
-import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { addImages } from "../logic/requestImages";
 import { createMockDaemon } from "../mock/daemon";
 import { renderWithDaemon } from "../test/render";
 import { comboText, pickOption } from "../test/select";
 import { SpawnSheet } from "./SpawnSheet";
+
+vi.mock("../logic/requestImages", async (orig) => ({
+  ...(await orig<typeof import("../logic/requestImages")>()),
+  addImages: vi.fn(async (_n: number, files: { blob: Blob; name: string }[]) => ({
+    added: files.map((f) => ({
+      name: f.name,
+      blob: f.blob,
+      image: f.blob.type.startsWith("image/"),
+    })),
+  })),
+}));
+
+const png = (name = "a.png") =>
+  new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: "image/png" });
+
+beforeEach(() => {
+  let n = 0;
+  URL.createObjectURL = vi.fn(() => `blob:mock/${++n}`);
+  URL.revokeObjectURL = vi.fn();
+});
 
 const roomy = () => {
   const d = createMockDaemon();
@@ -222,5 +243,80 @@ describe("SpawnSheet (§16.10)", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     const post = daemon.calls.find((c) => c.path === "/api/items/EPIC-20/orchestrator");
     expect(post?.body).toMatchObject({ roles: { designer: { agent: "claude", model: "sonnet" } } });
+  });
+
+  it("shows the additional request field below the name", async () => {
+    renderWithDaemon(<SpawnSheet itemKey="EPIC-20" onClose={vi.fn()} />, {
+      daemon: roomy(),
+      events: false,
+    });
+    const sheet = await screen.findByRole("dialog", { name: "Start orchestrator" });
+    const name = within(sheet).getByRole("textbox", { name: "Name" });
+    const request = within(sheet).getByRole("textbox", { name: "Additional request (optional)" });
+    expect(name.compareDocumentPosition(request) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps Start disabled, without a spinner, while a file is still being prepared", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    vi.mocked(addImages).mockImplementationOnce(async (_n, files) => {
+      await gate;
+      return { added: files.map((f) => ({ ...f, image: true })) };
+    });
+    renderWithDaemon(<SpawnSheet itemKey="EPIC-20" onClose={vi.fn()} />, {
+      daemon: roomy(),
+      events: false,
+    });
+    const sheet = await screen.findByRole("dialog", { name: "Start orchestrator" });
+    const request = within(sheet).getByRole("textbox", { name: "Additional request (optional)" });
+    fireEvent.paste(request, {
+      clipboardData: { files: [png("slow.png")], types: ["Files"], getData: () => "" },
+    });
+    const start = within(sheet).getByRole("button", { name: "Start orchestrator" });
+    expect(start).toBeDisabled();
+    expect(start.querySelector("svg.animate-spin")).toBeNull();
+    release();
+    expect(await within(sheet).findByRole("img", { name: "slow.png" })).toBeInTheDocument();
+    expect(start).toBeEnabled();
+  });
+
+  it("sends request and attachments only when they are present", async () => {
+    const onClose = vi.fn();
+    const first = renderWithDaemon(<SpawnSheet itemKey="EPIC-20" onClose={onClose} />, {
+      daemon: roomy(),
+      events: false,
+    });
+    const { daemon } = first;
+    const sheet = await screen.findByRole("dialog", { name: "Start orchestrator" });
+    await first.user.click(within(sheet).getByRole("button", { name: "Start orchestrator" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    first.unmount();
+    const empty = daemon.calls.find((c) => c.path === "/api/items/EPIC-20/orchestrator")
+      ?.body as object;
+    expect(empty).not.toHaveProperty("request");
+    expect(empty).not.toHaveProperty("attachments");
+
+    onClose.mockClear();
+    const again = renderWithDaemon(<SpawnSheet itemKey="STORY-41" onClose={onClose} />, {
+      daemon,
+      events: false,
+    });
+    const sheet2 = await screen.findByRole("dialog", { name: "Start orchestrator" });
+    const request = within(sheet2).getByRole("textbox", { name: "Additional request (optional)" });
+    await again.user.type(request, "Look at this");
+    fireEvent.paste(request, {
+      clipboardData: { files: [png("a.png")], types: ["Files"], getData: () => "" },
+    });
+    expect(await within(sheet2).findByRole("img", { name: "a.png" })).toBeInTheDocument();
+    await again.user.click(within(sheet2).getByRole("button", { name: "Start orchestrator" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    const body = daemon.calls.find((c) => c.path === "/api/items/STORY-41/orchestrator")?.body as {
+      request?: string;
+      attachments?: { name: string; data: string }[];
+    };
+    expect(body.request).toBe("Look at this");
+    expect(body.attachments).toEqual([{ name: "a.png", data: btoa("\x89PNG") }]);
   });
 });

@@ -559,6 +559,8 @@ export interface StartOrchestratorBody {
   repos_version: number;
   name?: string;
   roles?: Partial<Record<SettingsRole, RoleDefault>>;
+  request?: string;
+  attachments?: { name: string; data: string }[];
 }
 export type SpikeIntent = "chore" | "feature" | "debug";
 

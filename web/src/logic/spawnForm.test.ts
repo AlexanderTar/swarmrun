@@ -82,7 +82,7 @@ describe("spawn form rules (§16.3, §16.10)", () => {
   it("builds payloads", async () => {
     const item = makeItem({ key: "EPIC-12", repos_version: 1 });
     expect(
-      orchestratorPayload(
+      await orchestratorPayload(
         { name: "auth-orchestrator", repos: ["repo_chat"], fields },
         item,
         db.settings,
@@ -98,6 +98,31 @@ describe("spawn form rules (§16.3, §16.10)", () => {
       repos_version: 1,
       name: "auth-orchestrator",
     });
+    expect(
+      await orchestratorPayload(
+        { name: "auth-orchestrator", repos: ["repo_chat"], fields },
+        item,
+        db.settings,
+        db.catalog,
+        "r1b",
+      ),
+    ).not.toHaveProperty("request");
+    const png = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: "image/png" });
+    const withEntries = await orchestratorPayload(
+      {
+        name: "auth-orchestrator",
+        repos: ["repo_chat"],
+        fields,
+        request: "  Look  ",
+        images: [{ name: "a.png", blob: png }],
+      },
+      item,
+      db.settings,
+      db.catalog,
+      "r1c",
+    );
+    expect(withEntries.request).toBe("Look");
+    expect(withEntries.attachments).toEqual([{ name: "a.png", data: btoa("\x89PNG") }]);
     expect(
       await spikePayload(
         {
