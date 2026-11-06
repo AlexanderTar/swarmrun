@@ -893,8 +893,14 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 		}
 		addition = renderAddition(in.Request, section)
 	}
+	// Only entries ride an idempotency key: a plain retry must behave as on
+	// main and start fresh instead of replaying an old operation.
+	requestKey := ""
+	if strings.TrimSpace(in.Request) != "" || len(in.Attachments) > 0 {
+		requestKey = in.RequestID
+	}
 	op, inserted, err := s.requestReplacement(ctx, a.ID, replacementInput{
-		Mode: ModeRecover, RequestKey: in.RequestID, SwitchJSON: switchJSON, BriefAddition: addition, AttachmentsFailed: failed,
+		Mode: ModeRecover, RequestKey: requestKey, SwitchJSON: switchJSON, BriefAddition: addition, AttachmentsFailed: failed,
 	})
 	if inserted {
 		committed = true

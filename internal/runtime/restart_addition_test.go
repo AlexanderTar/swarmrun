@@ -341,6 +341,26 @@ func TestReplayedRestartReportsStoredAttachmentsFailed(t *testing.T) {
 	}
 }
 
+func TestPlainRestartRetrySucceedsAfterRecovery(t *testing.T) {
+	s, tm, _ := newStore(t)
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	orch := stopOrchestrator(t, s, "EPIC-1")
+	tm.startErr = errors.New("tmux refuses to start")
+	in := OrchestratorInput{ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1", RequestID: "req-plain"}
+	_, _, err := s.StartOrchestrator(ctx, in)
+	var ie *items.Error
+	if !errors.As(err, &ie) || ie.Code != items.CodeConflict {
+		t.Fatalf("first restart err = %v, want a blocked restart", err)
+	}
+	// The session recovers: the same plain retry must behave as on main and start fresh.
+	tm.startErr = nil
+	again, _, err := s.StartOrchestrator(ctx, in)
+	if err != nil || again.ID != orch.ID {
+		t.Fatalf("retry = %s, %v, want the orchestrator back", again.ID, err)
+	}
+}
+
 func TestRestartFilesOnCancelledRootAreRefused(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()
