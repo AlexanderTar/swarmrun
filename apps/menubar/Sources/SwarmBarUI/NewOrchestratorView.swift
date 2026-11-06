@@ -384,7 +384,9 @@ struct RequestImageStrip: View {
                         }
                         // Clearance for the tiles' remove badges, which overhang
                         // the top and trailing edges and the scroll view clips.
-                        .padding([.top, .trailing], 10)
+                        // Equal top and bottom keeps the tile centred with
+                        // Add files and the counter; 4pt clears the ~2.5pt overhang.
+                        .padding([.top, .bottom, .trailing], 4)
                         .background(SubtleScrollerConfig())
                     }
                     .scrollIndicators(.never)

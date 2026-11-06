@@ -513,6 +513,39 @@ final class NewOrchestratorRenderTests: XCTestCase {
         XCTAssertTrue(try visibleText(h).lowercased().contains(Copy.imageTooLarge("n.pdf").lowercased()))
     }
 
+    /// The tile, the Add files button and the counter share one vertical centre.
+    /// Fails while the strip pads only the top for the remove badge: the tile
+    /// rides ~5pt low.
+    @MainActor
+    func testFileStripTileSharesVerticalCentreWithCounter() throws {
+        let model = RequestImagesModel()
+        model.addImage(data: Data("x".utf8), name: "notes.pdf")
+        XCTAssertEqual(model.images.count, 1)
+        let size = CGSize(width: 600, height: 100)
+        let stripHost = NSHostingView(rootView: RequestImageStrip(model: model))
+        stripHost.frame = NSRect(origin: .zero, size: size)
+        stripHost.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+        let bitmap = try ocrBitmap(stripHost)
+        guard let cg = bitmap.cgImage else { throw CocoaError(.fileReadCorruptFile) }
+        let request = VNRecognizeTextRequest()
+        try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
+        let boxes = (request.results ?? []).compactMap { result -> (String, CGRect)? in
+            guard let text = result.topCandidates(1).first?.string else { return nil }
+            let box = CGRect(x: result.boundingBox.minX * size.width,
+                             y: (1 - result.boundingBox.maxY) * size.height,
+                             width: result.boundingBox.width * size.width,
+                             height: result.boundingBox.height * size.height)
+            return (text, box)
+        }
+        let tile = try XCTUnwrap(boxes.first { $0.0.uppercased().contains("PDF") }?.1,
+                                 "tile label missing in \(boxes.map(\.0))")
+        let counter = try XCTUnwrap(boxes.first { $0.0.contains("1 of 10") }?.1,
+                                    "counter missing in \(boxes.map(\.0))")
+        XCTAssertEqual(tile.midY, counter.midY, accuracy: 2,
+                       "tile shares the strip's vertical centre with the counter (and the Add files button): tile \(tile) counter \(counter)")
+    }
+
     func testStartedWithUnsavedImagesShowsWarningAndDoneButton() async throws {
         let client = try MockDaemonClient(fixtures: Fixture.dir)
         let model = makeAppModel(client)

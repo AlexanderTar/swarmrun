@@ -376,6 +376,20 @@ final class BoardHandoffRenderTests: XCTestCase {
         XCTAssertEqual(scroll.frame.height, 200, accuracy: 1)
     }
 
+    /// The Done state at a low form height stays inside the visible area.
+    func testDoneStateWindowStaysWithinVisibleHeight() async throws {
+        let client = try MockDaemonClient(fixtures: Fixture.dir)
+        let form = try await flaggedForm(selectedKey: "BUG-7", handoff: false, client: client)
+        XCTAssertNotNil(form.unsavedFilesNotice)
+        let window = openWindow(BoardHandoffView(form: form, onDone: {}, onCancel: {}, maxFormHeight: 200))
+        defer { window.close() }
+        let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 800)
+        XCTAssertLessThanOrEqual(window.frame.height, visible.height + 2,
+                       "Done window height \(window.frame.height) fits in visible \(visible.height)")
+        XCTAssertGreaterThanOrEqual(window.frame.minY, visible.minY - 2,
+                       "Done window stays on screen: \(window.frame) in \(visible)")
+    }
+
     // MARK: files-not-saved (unit 5)
 
     private func flaggedForm(selectedKey: String, handoff: Bool, client: MockDaemonClient) async throws -> BoardHandoffForm {

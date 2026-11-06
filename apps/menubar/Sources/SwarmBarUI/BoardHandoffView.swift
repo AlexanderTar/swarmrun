@@ -21,8 +21,9 @@ public struct BoardHandoffView: View {
     /// The request field's fixed height: it scrolls inside itself past this.
     static let requestFieldHeight: CGFloat = 120
 
-    /// Room the window chrome needs beyond the scrolling form: title bar plus footer.
-    public static let windowChromeHeight: CGFloat = 96
+    /// Room the window chrome needs beyond the scrolling form: title bar plus
+    /// footer, plus the files-not-saved notice line so Done stays on screen.
+    public static let windowChromeHeight: CGFloat = 128
 
     public static var defaultMaxFormHeight: CGFloat {
         (NSScreen.main?.visibleFrame.height ?? 800) - windowChromeHeight
