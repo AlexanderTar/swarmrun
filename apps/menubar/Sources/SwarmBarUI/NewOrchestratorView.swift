@@ -84,9 +84,9 @@ public struct NewOrchestratorView: View {
             AgentPickerGrid(picker: form.picker)
             VStack(alignment: .leading, spacing: 4) {
                 Text(Copy.requestOptional)
-                RequestEditor(text: $form.request, onImageData: { form.addImage(data: $0, name: $1) },
-                             onImageURLs: { form.addImages(from: $0) })
-                RequestImageStrip(form: form)
+                RequestEditor(text: $form.request, onImageData: { form.attachments.addImage(data: $0, name: $1) },
+                             onImageURLs: { form.attachments.addImages(from: $0) })
+                RequestImageStrip(model: form.attachments)
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
@@ -369,7 +369,7 @@ final class ImagePasteTextView: NSTextView {
 /// Attachment strip under the request editor (spec Screens): 0 attachments shows only the Add
 /// files… button; the counter is hidden until the first one; the button disables at 10.
 struct RequestImageStrip: View {
-    @Bindable var form: NewOrchestratorForm
+    @Bindable var model: RequestImagesModel
 
     /// Any file, not just images.
     static let pickerContentTypes: [UTType] = [.item]
@@ -377,10 +377,10 @@ struct RequestImageStrip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                if !form.images.isEmpty {
+                if !model.images.isEmpty {
                     ScrollView(.horizontal) {
                         HStack(spacing: 8) {
-                            ForEach(form.images) { image in AttachmentTile(image: image, onRemove: { form.removeImage(image.id) }) }
+                            ForEach(model.images) { image in AttachmentTile(image: image, onRemove: { model.removeImage(image.id) }) }
                         }
                         .background(SubtleScrollerConfig())
                     }
@@ -389,13 +389,13 @@ struct RequestImageStrip: View {
                 }
                 Button(Copy.addImages) { addImages() }.glassButtons()
                     .accessibilityLabel(Copy.addImages)
-                    .disabled(form.images.count >= 10)
-                if !form.images.isEmpty {
-                    Text(Copy.imageCount(form.images.count)).font(.caption).foregroundStyle(.secondary)
+                    .disabled(model.images.count >= 10)
+                if !model.images.isEmpty {
+                    Text(Copy.imageCount(model.images.count)).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }
-            if let error = form.imageError { Text(error).font(.caption).foregroundStyle(.red) }
+            if let error = model.error { Text(error).font(.caption).foregroundStyle(.red) }
         }
     }
 
@@ -406,7 +406,7 @@ struct RequestImageStrip: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK else { return }
-        form.addImages(from: panel.urls)
+        model.addImages(from: panel.urls)
     }
 }
 

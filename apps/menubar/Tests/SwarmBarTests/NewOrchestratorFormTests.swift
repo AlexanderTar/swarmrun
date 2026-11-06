@@ -377,108 +377,19 @@ final class NewOrchestratorFormTests: XCTestCase {
               0x42, 0x60, 0x82])
     }
 
-    func testAddImageKeepsPNGAsIs() async {
-        let f = await form()
-        f.addImage(data: pngData, name: "a.png")
-        XCTAssertEqual(f.images.count, 1)
-        XCTAssertEqual(f.images.first?.data, pngData)
-        XCTAssertNil(f.imageError)
-    }
-
-    func testAddImageConvertsTIFFToPNG() async {
-        let f = await form()
-        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8,
-                                   samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
-                                   bytesPerRow: 0, bitsPerPixel: 0)!
-        let tiff = rep.tiffRepresentation!
-        f.addImage(data: tiff, name: "a.tiff")
-        XCTAssertEqual(f.images.count, 1)
-        XCTAssertEqual(f.images.first?.data.prefix(4), Data([0x89, 0x50, 0x4E, 0x47]))
-    }
-
-    func testAddImagePassesNonImageFileThroughUnchanged() async {
-        let f = await form()
-        let pdf = Data("%PDF-1.7\n1 0 obj\n".utf8)
-        let md = Data("# Notes\n".utf8)
-        f.addImage(data: pdf, name: "spec.pdf")
-        f.addImage(data: md, name: "notes.md")
-        XCTAssertNil(f.imageError)
-        XCTAssertEqual(f.images.map(\.name), ["spec.pdf", "notes.md"])
-        XCTAssertEqual(f.images.map(\.data), [pdf, md])
-        XCTAssertEqual(f.images.map(\.isImage), [false, false])
-    }
-
-    func testAddImageMarksRealImagesAsImages() async {
-        let f = await form()
-        f.addImage(data: pngData, name: "a.png")
-        XCTAssertEqual(f.images.first?.isImage, true)
-    }
-
-    func testAttachmentCapIsSharedAcrossImagesAndFiles() async {
-        let f = await form()
-        for i in 0..<5 { f.addImage(data: pngData, name: "\(i).png") }
-        for i in 0..<5 { f.addImage(data: Data("x".utf8), name: "\(i).txt") }
-        XCTAssertNil(f.imageError)
-        XCTAssertEqual(f.images.count, 10)
-        f.addImage(data: Data("x".utf8), name: "eleventh.zip")
-        XCTAssertEqual(f.imageError, "Up to 10 attachments.")
-        XCTAssertEqual(f.images.count, 10)
-    }
-
-    func testAddImageRejectsOversizeFile() async {
-        let f = await form()
-        f.addImage(data: Data(count: (10 << 20) + 1), name: "big.pdf")
-        XCTAssertEqual(f.imageError, "big.pdf is larger than 10 MB.")
-        XCTAssertEqual(f.images.count, 0)
-    }
-
-    func testAddImageAcceptsFileOfExactlyTenMB() async {
-        let f = await form()
-        f.addImage(data: Data(count: 10 << 20), name: "max.bin")
-        XCTAssertNil(f.imageError)
-        XCTAssertEqual(f.images.count, 1)
-    }
-
     func testBodyKeepsOriginalNameAndBytesForFiles() async throws {
         let f = await form()
         f.name = "x"
         let pdf = Data("%PDF-1.7".utf8)
-        f.addImage(data: pdf, name: "Quarterly Report.final.pdf")
+        f.attachments.addImage(data: pdf, name: "Quarterly Report.final.pdf")
         let body = try XCTUnwrap(f.body())
         XCTAssertEqual(body.attachments, [AttachmentPayload(name: "Quarterly Report.final.pdf", data: pdf.base64EncodedString())])
-    }
-
-    func testAddImageCapsAtTen() async {
-        let f = await form()
-        for i in 0..<11 { f.addImage(data: pngData, name: "\(i).png") }
-        XCTAssertEqual(f.imageError, "Up to 10 attachments.")
-        XCTAssertEqual(f.images.count, 10)
-    }
-
-    func testAddImageRejectsOversize() async {
-        let f = await form()
-        var big = pngData
-        big.append(Data(count: 10 << 20))
-        f.addImage(data: big, name: "big.png")
-        XCTAssertEqual(f.imageError, "big.png is larger than 10 MB.")
-        XCTAssertEqual(f.images.count, 0)
-    }
-
-    func testRemoveImageClearsErrorAndEntry() async {
-        let f = await form()
-        f.addImage(data: pngData, name: "a.png")
-        f.addImage(data: Data("x".utf8), name: "big.txt")
-        for i in 0..<10 { f.addImage(data: pngData, name: "\(i).png") }
-        XCTAssertNotNil(f.imageError)
-        f.removeImage(f.images[0].id)
-        XCTAssertEqual(f.images.count, 9)
-        XCTAssertNil(f.imageError)
     }
 
     func testSubmitCarriesAttachmentsAsBase64() async throws {
         let f = await form()
         f.name = "x"
-        f.addImage(data: pngData, name: "a.png")
+        f.attachments.addImage(data: pngData, name: "a.png")
         let body = try XCTUnwrap(f.body())
         XCTAssertEqual(body.attachments, [AttachmentPayload(name: "a.png", data: pngData.base64EncodedString())])
     }
@@ -493,7 +404,7 @@ final class NewOrchestratorFormTests: XCTestCase {
     func testAttachmentsFailedSetsStartedWithUnsavedImages() async throws {
         let f = await form()
         f.name = "x"
-        f.addImage(data: pngData, name: "a.png")
+        f.attachments.addImage(data: pngData, name: "a.png")
         client.spikeResult = .success(CreateSpikeResponse(
             agent: AgentNode(name: "x", kind: .claude, model: "opus", role: .orchestrator), queued: false, attachmentsFailed: true))
         let created = await f.submit()

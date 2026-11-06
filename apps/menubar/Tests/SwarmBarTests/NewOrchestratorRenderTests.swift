@@ -469,7 +469,7 @@ final class NewOrchestratorRenderTests: XCTestCase {
         // verified empirically -- so only the counter, a plain Text, is checked here. The button
         // itself is exercised at the model layer (NewOrchestratorFormTests' image tests).
         XCTAssertFalse(try visibleText(h).contains(Copy.imageCount(0)))
-        XCTAssertEqual(form.images.count, 0)
+        XCTAssertEqual(form.attachments.images.count, 0)
     }
 
     func testImageStripShowsThumbnailsAndCounter() async throws {
@@ -478,10 +478,10 @@ final class NewOrchestratorRenderTests: XCTestCase {
         await model.refresh()
         let form = model.makeNewOrchestratorForm()
         await form.load()
-        form.addImage(data: pngData, name: "a.png")
-        form.addImage(data: pngData, name: "b.png")
-        form.addImage(data: pngData, name: "c.png")
-        XCTAssertEqual(form.images.map(\.name), ["a.png", "b.png", "c.png"])
+        form.attachments.addImage(data: pngData, name: "a.png")
+        form.attachments.addImage(data: pngData, name: "b.png")
+        form.attachments.addImage(data: pngData, name: "c.png")
+        XCTAssertEqual(form.attachments.images.map(\.name), ["a.png", "b.png", "c.png"])
         let h = host(form)
         XCTAssertTrue(try visibleText(h).contains(Copy.imageCount(3)))
     }
@@ -492,10 +492,10 @@ final class NewOrchestratorRenderTests: XCTestCase {
         await model.refresh()
         let form = model.makeNewOrchestratorForm()
         await form.load()
-        for i in 0..<10 { form.addImage(data: pngData, name: "\(i).png") }
-        // The Add files… button's disabled binding is form.images.count >= 10, exercised at the
+        for i in 0..<10 { form.attachments.addImage(data: pngData, name: "\(i).png") }
+        // The Add files… button's disabled binding is form.attachments.images.count >= 10, exercised at the
         // model layer (testAddImageCapsAtTen); this just confirms the maxed-out strip still renders.
-        XCTAssertEqual(form.images.count, 10)
+        XCTAssertEqual(form.attachments.images.count, 10)
         let h = host(form)
         XCTAssertTrue(try visibleText(h).contains(Copy.imageCount(10)))
     }
@@ -506,7 +506,7 @@ final class NewOrchestratorRenderTests: XCTestCase {
         await model.refresh()
         let form = model.makeNewOrchestratorForm()
         await form.load()
-        form.addImage(data: Data(count: (10 << 20) + 1), name: "n.pdf")
+        form.attachments.addImage(data: Data(count: (10 << 20) + 1), name: "n.pdf")
         let h = host(form)
         // OCR occasionally misreads a lowercase "i" as "I" in this small caption font; compare
         // case-insensitively rather than assert exact-case text a human never sees compared.
@@ -520,7 +520,7 @@ final class NewOrchestratorRenderTests: XCTestCase {
         let form = model.makeNewOrchestratorForm()
         await form.load()
         form.name = "x"
-        form.addImage(data: pngData, name: "a.png")
+        form.attachments.addImage(data: pngData, name: "a.png")
         client.spikeResult = .success(CreateSpikeResponse(
             agent: AgentNode(name: "x", kind: .claude, model: "opus", role: .orchestrator), queued: false, attachmentsFailed: true))
         let created = await form.submit()
