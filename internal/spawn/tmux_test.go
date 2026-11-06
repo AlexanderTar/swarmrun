@@ -44,6 +44,31 @@ func waitFor(t *testing.T, what string, fn func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// tmux gives every pane its server's environment, and the server is started by
+// the installed daemon: without this, `make dev` in an agent's pane would inherit
+// the live tmux socket, real usage polling and desktop banners (S-1, S-4).
+func TestStartBlanksTheProductionSwitchesInThePane(t *testing.T) {
+	for _, k := range []string{"SWARM_TMUX_SOCKET", "SWARM_USAGE", "SWARM_NOTIFY"} {
+		t.Setenv(k, "production")
+	}
+	t.Setenv("SWARM_HOME", "/tmp/swarm-home") // the MCP shim reads it in the pane
+	s := newSpawner(t)
+	out := filepath.Join(t.TempDir(), "env")
+	script := `printf '%s|%s|%s|%s' "$SWARM_TMUX_SOCKET" "$SWARM_USAGE" "$SWARM_NOTIFY" "$SWARM_HOME" > "$0.tmp"; mv "$0.tmp" "$0"; sleep 30`
+	if err := s.Start(context.Background(), "switches", t.TempDir(), map[string]string{"PATH": os.Getenv("PATH")}, []string{"sh", "-c", script, out}); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	waitFor(t, "the pane to record its environment", func() bool {
+		b, err := os.ReadFile(out)
+		got = b
+		return err == nil
+	})
+	if want := "|||/tmp/swarm-home"; string(got) != want {
+		t.Fatalf("pane saw %q, want %q", got, want)
+	}
+}
+
 func TestStartPassesTheEnvironmentIntoThePane(t *testing.T) {
 	s := newSpawner(t)
 	ctx := context.Background()

@@ -89,13 +89,21 @@ func ClipboardConf(goos string) []string {
 	}
 }
 
+// productionSwitches are what the installed daemon's service sets to pick the
+// live tmux server, real usage polling and desktop banners (S-1, S-4). tmux gives
+// every pane its server's environment, so a pane gets them blank, which counts as
+// unset: a daemon started from one (`make dev` in an agent working on Swarm) must
+// not inherit them. Only the daemon reads them. SWARM_HOME stays: the MCP shim
+// reads it in the pane.
+var productionSwitches = []string{"SWARM_TMUX_SOCKET", "SWARM_USAGE", "SWARM_NOTIFY"}
+
 // BaseEnv is the environment every spawn copies (L9). USER is what the keychain
 // lookup needs, so the six L9 keys are always present even when the value is
 // empty. GNUPGHOME is different: it is copied only when the daemon has one, and
 // it is not one of L9's six. It is here for safety, not for the feature (R10) —
 // without it, an e2e run that sets up a throwaway keyring in its own process
-// would have the agent sign with the user's real secret keys, because the agent
-// runs in a tmux pane whose whole environment is this map.
+// would have the agent sign with the user's real secret keys, because this map
+// overrides what the agent's tmux pane would otherwise inherit from the server.
 func BaseEnv(osEnv func(string) string) map[string]string {
 	env := map[string]string{}
 	for _, k := range []string{"USER", "HOME", "LOGNAME", "SHELL", "TMPDIR", "PATH"} {
@@ -176,6 +184,9 @@ func (s *Spawner) Start(ctx context.Context, name, cwd string, env map[string]st
 		return fmt.Errorf("tmux new-session %s: %w", name, err)
 	}
 	a := []string{"new-session", "-d", "-s", name, "-c", cwd, "-x", "220", "-y", "60"}
+	for _, k := range productionSwitches {
+		a = append(a, "-e", k+"=")
+	}
 	for _, k := range sortedKeys(env) {
 		a = append(a, "-e", k+"="+env[k])
 	}
