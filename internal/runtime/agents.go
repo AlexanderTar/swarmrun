@@ -628,13 +628,34 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 		return Agent{}, false, err
 	}
 
+	objective := it.Brief
+	addition := ""
+	if strings.TrimSpace(in.Request) != "" || len(in.Attachments) > 0 {
+		section := ""
+		if len(in.Attachments) > 0 {
+			batch, err := attachments.Save(s.Home, it.Key, in.Attachments)
+			if err != nil {
+				return Agent{}, false, err
+			}
+			section = attachments.BriefSection(batch.Files)
+		}
+		addition = renderAddition(in.Request, section)
+		if addition != "" {
+			if strings.TrimSpace(it.Brief) == "" {
+				objective = addition
+			} else {
+				objective = strings.TrimSpace(it.Brief) + "\n\n" + addition
+			}
+		}
+	}
+
 	briefText, err := RenderBrief(BriefInput{
 		Key:       it.Key,
 		Title:     it.Title,
 		Name:      name,
 		Role:      RoleOrchestrator,
 		RootKey:   it.Key,
-		Objective: it.Brief,
+		Objective: objective,
 	})
 	if err != nil {
 		return Agent{}, false, err
@@ -672,6 +693,12 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 	payload, _ := json.Marshal(map[string]string{"brief": briefText, "item_key": it.Key})
 	var queued bool
 	err = s.tx(ctx, func(tx *sql.Tx) error {
+		if addition != "" {
+			brief := objective
+			if _, err := s.Items.UpdateTx(ctx, tx, it.Key, items.Patch{Brief: &brief, Revision: it.Revision}, items.Daemon()); err != nil {
+				return err
+			}
+		}
 		admitted, err := s.Admit(ctx, tx, RoleOrchestrator, it.RootID)
 		if err != nil {
 			return err

@@ -411,6 +411,28 @@ const contextTruncated = "(context truncated to fit the brief; the full text arr
 // cap -- collapses each unit's steps to its title plus the same pointer. A
 // legacy (non-workflow) spawn never cascades: it just refuses, unchanged
 // (Review Focus 1).
+// renderAddition is the extra section a fresh start appends to a task description.
+// Empty when there is no request and no attachments section.
+func renderAddition(request, attachmentsSection string) string {
+	request = strings.TrimSpace(request)
+	attachmentsSection = strings.TrimSpace(attachmentsSection)
+	if request == "" && attachmentsSection == "" {
+		return ""
+	}
+	var b strings.Builder
+	if request != "" {
+		b.WriteString("## Additional request\n\n")
+		b.WriteString(request)
+	}
+	if attachmentsSection != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(attachmentsSection)
+	}
+	return b.String()
+}
+
 func RenderBrief(in BriefInput) (string, error) {
 	if out := renderBriefOnce(in, false, false); items.BriefFits(out) {
 		return out, nil

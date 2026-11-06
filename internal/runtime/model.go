@@ -160,6 +160,10 @@ type OrchestratorInput struct {
 	Name      string
 	RepoPaths []string
 	Roles     map[Role]settings.RoleDefault
+
+	Request           string
+	Attachments       []attachments.File
+	AttachmentsFailed *bool
 }
 
 type Session struct {

@@ -103,9 +103,22 @@ func wrapPreflightErr(err error) error {
 
 func (s *Server) startOrchestrator(w http.ResponseWriter, r *http.Request) {
 	var body orchestratorRequestBody
-	if err := readJSON(r, &body); err != nil {
+	if err := readJSONLimit(r, &body, 160<<20); err != nil {
 		s.writeErr(w, err)
 		return
+	}
+	var files []attachments.File
+	if len(body.Attachments) > 0 {
+		in := make([]attachments.Input, len(body.Attachments))
+		for i, a := range body.Attachments {
+			in[i] = attachments.Input{Name: a.Name, Data: a.Data}
+		}
+		decoded, err := attachments.Decode(in)
+		if err != nil {
+			s.writeErr(w, err)
+			return
+		}
+		files = decoded
 	}
 	key := r.PathValue("key")
 	s.idempotent(w, r, body.RequestID, "POST /api/items/{key}/orchestrator", http.StatusOK, func(ctx context.Context) (any, error) {
@@ -126,7 +139,7 @@ func (s *Server) startOrchestrator(w http.ResponseWriter, r *http.Request) {
 		}
 		a, _, err := s.RT.StartOrchestrator(ctx, runtime.OrchestratorInput{ItemKey: key, Kind: runtime.AgentKind(body.Agent),
 			Model: body.Model, Effort: body.Effort, Advisor: advisorChoiceFromBody(body.Advisor), Roles: rolesFromBody(body.Roles), Name: body.Name,
-			RepoPaths: repoPaths})
+			RepoPaths: repoPaths, Request: body.Request, Attachments: files})
 		if err != nil {
 			return nil, wrapPreflightErr(err)
 		}

@@ -514,6 +514,71 @@ func TestStartSpikeWithChoreIntentCreatesAReadyChore(t *testing.T) {
 	}
 }
 
+func TestQueuedStartSyncCarriesTheAddition(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	setLimits(t, s, 0)
+	seedEpicWithTask(t, s)
+	if got := renderAddition("Read this while you wait.", ""); !strings.Contains(got, "Read this while you wait.") {
+		t.Fatalf("renderAddition = %q", got)
+	}
+	files := []attachments.File{{Name: "notes.md", Ext: ".md", Body: []byte("queued file")}}
+	a, queued, err := s.StartOrchestrator(ctx, OrchestratorInput{
+		ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1",
+		Request: "Read this while you wait.", Attachments: files,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !queued || a.State != AgentQueued {
+		t.Fatalf("queued = %v state = %s", queued, a.State)
+	}
+	it, err := s.Items.Get(ctx, "EPIC-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := attachmentPath(t, s.Home, "EPIC-1", "01-notes.md")
+	if !strings.Contains(it.Brief, "Read this while you wait.") || !strings.Contains(it.Brief, path) {
+		t.Fatalf("description = %q, want the request and %s", it.Brief, path)
+	}
+	var payload string
+	if err := s.DB.QueryRowContext(ctx, `SELECT payload_json FROM messages WHERE to_agent_id = ? AND kind = 'assignment'`, a.ID).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload, "Read this while you wait.") || !strings.Contains(payload, path) {
+		t.Fatalf("sync payload = %s", payload)
+	}
+}
+
+func TestTaskKeepsAnEarlierAdditionAndListsBoth(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	task, err := s.Items.Get(ctx, "TASK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	earlier := "## Additional request\n\nkeep the first note"
+	if _, err := s.Items.Update(ctx, task.Key, items.Patch{Brief: &earlier, Revision: task.Revision}, items.User("board")); err != nil {
+		t.Fatal(err)
+	}
+	files := []attachments.File{{Name: "extra.md", Ext: ".md", Body: []byte("second file")}}
+	if _, _, err := s.StartOrchestrator(ctx, OrchestratorInput{
+		ItemKey: "TASK-1", Kind: Fake, Model: "fake-1",
+		Request: "add a second note", Attachments: files,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Items.Get(ctx, "TASK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := attachmentPath(t, s.Home, "TASK-1", "01-extra.md")
+	if !strings.Contains(got.Brief, "keep the first note") || !strings.Contains(got.Brief, "add a second note") || !strings.Contains(got.Brief, path) {
+		t.Fatalf("description = %q, want both notes and %s", got.Brief, path)
+	}
+}
+
 // Chore spec decision 1 / E3.
 func TestStartOrchestratorPromotesDraftRoot(t *testing.T) {
 	s, _, _ := newStore(t)

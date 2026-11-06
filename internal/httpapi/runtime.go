@@ -379,6 +379,8 @@ type orchestratorRequestBody struct {
 	Repos        []string                   `json:"repos"`
 	ReposVersion int                        `json:"repos_version"`
 	Name         string                     `json:"name"`
+	Request      string                     `json:"request"`
+	Attachments  []attachmentBody           `json:"attachments"`
 }
 
 type answerBody struct {

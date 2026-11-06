@@ -353,6 +353,77 @@ func TestCreateItemStillRefusesABodyOverOneMiB(t *testing.T) {
 	}
 }
 
+func itemBrief(t *testing.T, s *runtimeEnv, key string) string {
+	t.Helper()
+	var body struct {
+		Item struct {
+			Brief string `json:"brief"`
+		} `json:"item"`
+	}
+	json.Unmarshal(s.get(t, "/api/items/"+key).Body.Bytes(), &body)
+	return body.Item.Brief
+}
+
+func TestStartOrchestratorAcceptsABodyOverOneMiB(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	pngBytes, err := base64.StdEncoding.DecodeString(onePNGBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	big := base64.StdEncoding.EncodeToString(append(pngBytes, make([]byte, 1500*1024)...))
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", fmt.Sprintf(
+		`{"request_id":"big","agent":"fake","model":"fake-1","attachments":[{"name":"big.png","data":%q}]}`, big))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	batchFile(t, s.RT.Home, seed.EpicKey, "01-big.png")
+}
+
+func TestStartOrchestratorWithRequestAndFilePutsBothInTheDescriptionAndOnSync(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	data := base64.StdEncoding.EncodeToString([]byte("hello file"))
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", fmt.Sprintf(
+		`{"request_id":"o-add","agent":"fake","model":"fake-1","request":"Please read the notes.","attachments":[{"name":"notes.md","data":%q}]}`, data))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	path := batchFile(t, s.RT.Home, seed.EpicKey, "01-notes.md")
+	brief := itemBrief(t, s, seed.EpicKey)
+	if !strings.Contains(brief, "## Additional request") || !strings.Contains(brief, "Please read the notes.") || !strings.Contains(brief, path) {
+		t.Fatalf("description = %q, want the request and %s", brief, path)
+	}
+	var payload string
+	if err := s.DB.QueryRowContext(bg, `SELECT payload_json FROM messages WHERE kind = 'assignment' ORDER BY seq DESC LIMIT 1`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload, "Please read the notes.") || !strings.Contains(payload, path) {
+		t.Fatalf("sync payload = %s", payload)
+	}
+}
+
+func TestStartOrchestratorWithNoEntriesLeavesTheDescriptionAndResponseAsToday(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	before := itemBrief(t, s, seed.EpicKey)
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator",
+		`{"request_id":"o-plain","agent":"fake","model":"fake-1"}`)
+	if rec.Code != 200 {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if strings.Contains(rec.Body.String(), "attachments_failed") {
+		t.Fatalf("response grew a flag: %s", rec.Body)
+	}
+	if got := itemBrief(t, s, seed.EpicKey); got != before {
+		t.Fatalf("description = %q, want %q", got, before)
+	}
+	var payload string
+	if err := s.DB.QueryRowContext(bg, `SELECT payload_json FROM messages WHERE kind = 'assignment' ORDER BY seq DESC LIMIT 1`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(payload, "## Additional request") {
+		t.Fatalf("sync gained an addition: %s", payload)
+	}
+}
+
 func TestStartOrchestratorAndTheSecondOneIs409(t *testing.T) {
 	s, seed := newRuntimeServerWithEpic(t)
 	// A real, signed repo (not seed.RepoID's fake `.git` directory): required
