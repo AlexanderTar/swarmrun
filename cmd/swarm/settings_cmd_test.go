@@ -63,11 +63,26 @@ func TestSettingsSetTakesTextForATextSetting(t *testing.T) {
 }
 
 func TestSettingsCommandReportsTheDaemonsRefusal(t *testing.T) {
-	srv, _, home := stubDaemon(t, map[string]string{})
+	srv, got, home := stubDaemon(t, map[string]string{"GET /api/settings": `{}`})
 	defer srv.Close()
 	var out bytes.Buffer
 	if code := run([]string{"settings", "--home", home, "--url", srv.URL, "set", "x", "1"}, &out, &out); code != 1 || !strings.Contains(out.String(), "swarm:") {
 		t.Fatalf("refused = %d %q", code, out.String())
+	}
+	if last := (*got)[len(*got)-1]; last.method != "PATCH" {
+		t.Fatalf("the refusal came from %+v, want the PATCH", last)
+	}
+}
+
+func TestSettingsSetReportsAFailedRead(t *testing.T) {
+	srv, got, home := stubDaemon(t, map[string]string{})
+	defer srv.Close()
+	var out bytes.Buffer
+	if code := run([]string{"settings", "--home", home, "--url", srv.URL, "set", "x", "1"}, &out, &out); code != 1 || !strings.Contains(out.String(), "swarm:") {
+		t.Fatalf("failed read = %d %q", code, out.String())
+	}
+	if last := (*got)[len(*got)-1]; last.method != "GET" {
+		t.Fatalf("sent %+v after the read failed, want nothing", last)
 	}
 }
 
