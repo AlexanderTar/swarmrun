@@ -886,15 +886,7 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 			if op.AttachmentsFailed && in.AttachmentsFailed != nil {
 				*in.AttachmentsFailed = true
 			}
-			if op.Phase == PhaseBlocked {
-				return Agent{}, false, &items.Error{Code: items.CodeConflict,
-					Message: fmt.Sprintf("Recovery %s is blocked: %s", op.ID, op.Error)}
-			}
-			out, err := s.agentByID(ctx, a.ID)
-			if err != nil {
-				return Agent{}, false, err
-			}
-			return out, op.Phase != PhaseSucceeded, nil
+			return s.restartTailResult(ctx, a, op)
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return Agent{}, false, err
 		}
@@ -938,6 +930,13 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 	if err != nil {
 		return Agent{}, false, err
 	}
+	return s.restartTailResult(ctx, a, op)
+}
+
+// restartTailResult reports a stored replacement operation without touching
+// disk: a blocked recovery stays a conflict, otherwise the agent returns with
+// whether it still needs waiting (queued reports a wait in progress).
+func (s *Store) restartTailResult(ctx context.Context, a Agent, op Operation) (Agent, bool, error) {
 	if op.Phase == PhaseBlocked {
 		return Agent{}, false, &items.Error{Code: items.CodeConflict,
 			Message: fmt.Sprintf("Recovery %s is blocked: %s", op.ID, op.Error)}
