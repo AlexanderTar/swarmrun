@@ -28,6 +28,15 @@ import (
 	"github.com/AlexanderTar/swarmrun/internal/worktree"
 )
 
+func attachmentPath(t *testing.T, home, key, base string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(home, "attachments", key, "batch-*", base))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("attachment %s under %s: %v (%v)", base, key, matches, err)
+	}
+	return matches[0]
+}
+
 // onePNG is a valid 1x1 PNG, matching internal/attachments/testdata/one.png.
 var onePNG = mustDecodeBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4DwAAAQEABRjYTgAAAABJRU5ErkJggg==")
 
@@ -390,7 +399,7 @@ func TestStartSpikeWithAttachmentsSavesFilesAndRewritesTheBriefAndObjective(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPath := filepath.Join(s.Home, "attachments", key, "01-login-bug.png")
+	wantPath := attachmentPath(t, s.Home, key, "01-login-bug.png")
 	if !strings.Contains(it.Brief, "## Attachments") || !strings.Contains(it.Brief, wantPath) {
 		t.Fatalf("brief = %q, want it to contain %q", it.Brief, wantPath)
 	}
@@ -464,7 +473,7 @@ func TestStartSpikeWithAttachmentsAndFailingPreflightPutsAttachmentsOnTheFailedA
 	if len(tm.started) != 0 {
 		t.Fatalf("nothing should be spawned: %v", tm.started)
 	}
-	wantPath := filepath.Join(s.Home, "attachments", key, "01-login-bug.png")
+	wantPath := attachmentPath(t, s.Home, key, "01-login-bug.png")
 	if !strings.Contains(a.Brief, "## Attachments") || !strings.Contains(a.Brief, wantPath) {
 		t.Fatalf("failed-preflight agent brief = %q, want it to contain %q", a.Brief, wantPath)
 	}

@@ -103,17 +103,25 @@ func TestSaveWritesPrivateNumberedFiles(t *testing.T) {
 	home := t.TempDir()
 	files, _ := Decode([]Input{in("Login bug.png", png(t)), in("second.png", png(t))})
 	saved, err := Save(home, "SPIKE-12", files)
-	if err != nil || len(saved) != 2 {
+	if err != nil || len(saved.Files) != 2 {
 		t.Fatalf("Save = %+v, %v", saved, err)
 	}
-	want := filepath.Join(home, "attachments", "SPIKE-12", "01-login-bug.png")
-	if saved[0].Path != want || saved[0].Name != "Login bug.png" {
-		t.Fatalf("saved[0] = %+v, want path %s", saved[0], want)
+	if saved.Files[0].Name != "Login bug.png" || filepath.Base(saved.Files[0].Path) != "01-login-bug.png" {
+		t.Fatalf("saved[0] = %+v", saved.Files[0])
+	}
+	if filepath.Dir(saved.Files[0].Path) != saved.Dir || !strings.HasPrefix(filepath.Base(saved.Dir), "batch-") {
+		t.Fatalf("batch dir = %s", saved.Dir)
+	}
+	if rel, err := filepath.Rel(Dir(home, "SPIKE-12"), saved.Dir); err != nil || strings.HasPrefix(rel, "..") {
+		t.Fatalf("batch is not under the item dir: %s", saved.Dir)
 	}
 	if fi, _ := os.Stat(Dir(home, "SPIKE-12")); fi.Mode().Perm() != 0o700 {
-		t.Errorf("dir mode = %v", fi.Mode().Perm())
+		t.Errorf("item dir mode = %v", fi.Mode().Perm())
 	}
-	if fi, _ := os.Stat(saved[1].Path); fi.Mode().Perm() != 0o600 {
+	if fi, _ := os.Stat(saved.Dir); fi.Mode().Perm() != 0o700 {
+		t.Errorf("batch dir mode = %v", fi.Mode().Perm())
+	}
+	if fi, _ := os.Stat(saved.Files[1].Path); fi.Mode().Perm() != 0o600 {
 		t.Errorf("file mode = %v", fi.Mode().Perm())
 	}
 }
@@ -129,20 +137,93 @@ func TestSaveNamesFilesByTheirSanitizedExtension(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, want := range []string{"01-spec-sheet.pdf", "02-readme", "03-notes.md", "04-shot.png"} {
-		if got := filepath.Base(saved[i].Path); got != want {
+		if got := filepath.Base(saved.Files[i].Path); got != want {
 			t.Errorf("saved[%d] = %q, want %q", i, got, want)
 		}
 	}
 }
 
-func TestSaveFailureLeavesNoDir(t *testing.T) {
+func TestSecondBatchFailureKeepsFirstBatch(t *testing.T) {
 	home := t.TempDir()
-	if err := os.WriteFile(filepath.Join(home, "attachments"), nil, 0o600); err != nil { // a file blocks the dir
+	files, err := Decode([]Input{in("a.png", png(t)), in("b.png", png(t))})
+	if err != nil {
 		t.Fatal(err)
 	}
-	files, _ := Decode([]Input{in("a.png", png(t))})
+	first, err := Save(home, "SPIKE-1", files[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := writeFile
+	n := 0
+	writeFile = func(name string, data []byte, perm os.FileMode) error {
+		n++
+		if n == 2 {
+			return errors.New("disk full")
+		}
+		return orig(name, data, perm)
+	}
+	t.Cleanup(func() { writeFile = orig })
 	if _, err := Save(home, "SPIKE-1", files); err == nil {
-		t.Fatal("Save succeeded under a file")
+		t.Fatal("second Save succeeded")
+	}
+	body, err := os.ReadFile(first.Files[0].Path)
+	if err != nil {
+		t.Fatalf("first batch was removed: %v", err)
+	}
+	if string(body) != string(files[0].Body) {
+		t.Fatal("first batch contents changed")
+	}
+	entries, err := os.ReadDir(Dir(home, "SPIKE-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("item dir = %v, want only the first batch", entries)
+	}
+}
+
+func TestSameNamesInTwoBatchesBothSurvive(t *testing.T) {
+	home := t.TempDir()
+	files, err := Decode([]Input{in("notes.md", []byte("one")), in("notes.md", []byte("two"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := Save(home, "SPIKE-1", files[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Save(home, "SPIKE-1", files[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Files[0].Path == second.Files[0].Path {
+		t.Fatalf("both batches wrote %s", first.Files[0].Path)
+	}
+	got1, err := os.ReadFile(first.Files[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := os.ReadFile(second.Files[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got1) != "one" || string(got2) != "two" {
+		t.Fatalf("contents = %q %q", got1, got2)
+	}
+}
+
+func TestBriefSectionCutsLongNames(t *testing.T) {
+	long := strings.Repeat("é", 81)
+	path := "/h/attachments/SPIKE-1/batch-x/01-file.png"
+	got := BriefSection([]Saved{{Path: path, Name: long}})
+	if !strings.Contains(got, path) {
+		t.Fatalf("brief dropped the path: %s", got)
+	}
+	if strings.Contains(got, long) {
+		t.Fatalf("display name was not cut: %s", got)
+	}
+	if !strings.Contains(got, "("+strings.Repeat("é", 80)+")") {
+		t.Fatalf("brief = %s, want the name cut to 80 runes", got)
 	}
 }
 

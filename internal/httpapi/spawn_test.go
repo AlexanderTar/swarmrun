@@ -176,13 +176,9 @@ func TestCreateSpikeWithAttachmentsSavesFilesAndListsThemInTheBrief(t *testing.T
 		t.Fatal("attachments_failed = true on a happy save")
 	}
 	key, _ := body.Item["key"].(string)
-	dir := filepath.Join(s.RT.Home, "attachments", key)
-	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) != 2 {
-		t.Fatalf("attachments dir = %v, %v", entries, err)
-	}
+	path := batchFile(t, s.RT.Home, key, "01-login-bug.png")
 	brief, _ := body.Item["brief"].(string)
-	if !strings.Contains(brief, "## Attachments") || !strings.Contains(brief, filepath.Join(dir, "01-login-bug.png")) {
+	if !strings.Contains(brief, "## Attachments") || !strings.Contains(brief, path) {
 		t.Fatalf("brief missing attachments section: %q", brief)
 	}
 }
@@ -236,13 +232,10 @@ func TestCreateSpikeAcceptsArbitraryFileAttachments(t *testing.T) {
 	}
 	json.Unmarshal(rec.Body.Bytes(), &body)
 	key, _ := body.Item["key"].(string)
-	dir := filepath.Join(s.RT.Home, "attachments", key)
 	brief, _ := body.Item["brief"].(string)
 	for _, want := range []string{"01-shot.png", "02-spec.pdf", "03-notes.md"} {
-		if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
-			t.Errorf("missing %s: %v", want, err)
-		}
-		if !strings.Contains(brief, filepath.Join(dir, want)) {
+		path := batchFile(t, s.RT.Home, key, want)
+		if !strings.Contains(brief, path) {
 			t.Errorf("brief missing %s: %q", want, brief)
 		}
 	}
@@ -265,10 +258,35 @@ func TestCreateSpikeAttachmentsReplayWritesOnce(t *testing.T) {
 	}
 	json.Unmarshal(first.Body.Bytes(), &body)
 	key, _ := body.Item["key"].(string)
-	entries, err := os.ReadDir(filepath.Join(s.RT.Home, "attachments", key))
-	if err != nil || len(entries) != 2 {
-		t.Fatalf("attachments dir = %v, %v", entries, err)
+	if n := len(batchDirs(t, filepath.Join(s.RT.Home, "attachments", key))); n != 1 {
+		t.Fatalf("batch folders = %d, want 1", n)
 	}
+	batchFile(t, s.RT.Home, key, "01-a.png")
+	batchFile(t, s.RT.Home, key, "02-b.png")
+}
+
+func batchDirs(t *testing.T, itemDir string) []os.DirEntry {
+	t.Helper()
+	entries, err := os.ReadDir(itemDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var batches []os.DirEntry
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "batch-") {
+			batches = append(batches, e)
+		}
+	}
+	return batches
+}
+
+func batchFile(t *testing.T, home, key, base string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(home, "attachments", key, "batch-*", base))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("attachment %s: %v (%v)", base, matches, err)
+	}
+	return matches[0]
 }
 
 // (e) Save failing (home/attachments is a file, not a dir) still creates the

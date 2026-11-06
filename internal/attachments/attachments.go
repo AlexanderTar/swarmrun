@@ -2,7 +2,8 @@
 // request: images and arbitrary files (pdf, md, zip...) share one list (spec
 // docs/specs/2026-09-28-request-images.md). Images are sniffed and saved with
 // their real type's suffix; any other file keeps its sanitized name extension. The directory
-// <SWARM_HOME>/attachments/<ITEM-KEY>/ is the only record; Sweep removes it once
+// <SWARM_HOME>/attachments/<ITEM-KEY>/<batch>/ is the only record; Sweep removes the
+// item folder once
 // the item's root is Done, Cancelled or the item is gone. The directory belongs
 // to the daemon: agents must not write into it (screenshots and review evidence
 // go under <SWARM_HOME>/screenshots/<ITEM-KEY>/, which nothing sweeps).
@@ -71,6 +72,15 @@ type File struct {
 
 type Saved struct{ Path, Name string }
 
+// Batch is one request's files. Dir is that request's own subfolder.
+type Batch struct {
+	Dir   string
+	Files []Saved
+}
+
+// writeFile is the seam a test uses to fail one write of a later batch.
+var writeFile = os.WriteFile
+
 var exts = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
 
 func bad(format string, a ...any) error {
@@ -133,19 +143,27 @@ func safeName(name string) string {
 	return s
 }
 
-// Save writes NN-<safe-name><ext>; any failure removes the whole directory.
-func Save(home, key string, files []File) (saved []Saved, err error) {
-	dir := Dir(home, key)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+// Save writes each request under its own batch folder: NN-<safe-name><ext>.
+// A failure removes only that batch, never an earlier request's files.
+func Save(home, key string, files []File) (batch Batch, err error) {
+	itemDir := Dir(home, key)
+	if err = os.MkdirAll(itemDir, 0o700); err != nil {
+		return Batch{}, err
+	}
+	if err = os.Chmod(itemDir, 0o700); err != nil {
+		return Batch{}, err
+	}
+	dir, err := os.MkdirTemp(itemDir, "batch-")
+	if err != nil {
+		return Batch{}, err
 	}
 	defer func() {
 		if err != nil {
 			os.RemoveAll(dir)
 		}
 	}()
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return nil, err
+	if err = os.Chmod(dir, 0o700); err != nil {
+		return Batch{}, err
 	}
 	for i, f := range files {
 		base := strings.TrimSuffix(safeName(f.Name), filepath.Ext(safeName(f.Name)))
@@ -153,19 +171,28 @@ func Save(home, key string, files []File) (saved []Saved, err error) {
 			base = "attachment"
 		}
 		p := filepath.Join(dir, fmt.Sprintf("%02d-%s%s", i+1, base, f.Ext))
-		if err := os.WriteFile(p, f.Body, 0o600); err != nil {
-			return nil, err
+		if err = writeFile(p, f.Body, 0o600); err != nil {
+			return Batch{}, err
 		}
-		saved = append(saved, Saved{Path: p, Name: f.Name})
+		batch.Files = append(batch.Files, Saved{Path: p, Name: f.Name})
 	}
-	return saved, nil
+	batch.Dir = dir
+	return batch, nil
+}
+
+func cutRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 func BriefSection(saved []Saved) string {
 	var b strings.Builder
 	b.WriteString("## Attachments\n\nThe user attached these files to the request. Open each one with your file or image tool before you plan, and pass the paths that matter to children in their briefs.\n")
 	for _, s := range saved {
-		fmt.Fprintf(&b, "\n- %s (%s)", s.Path, s.Name)
+		fmt.Fprintf(&b, "\n- %s (%s)", s.Path, cutRunes(s.Name, 80))
 	}
 	return b.String()
 }
