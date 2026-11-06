@@ -352,6 +352,9 @@ export function createMockDaemon(db: MockDb = seed()): MockDaemon {
   }
 
   function startOrchestrator(key: string, body: Body): MockResponse {
+    // The relay refuses an oversized body before the daemon sees it, same as createSpike.
+    if (db.force413 || JSON.stringify(body).length > 32 << 20)
+      return fail(413, "internal", "request body too large");
     return once(body.request_id, () => {
       const it = item(key);
       if (!it) return notFound(key);
@@ -370,7 +373,14 @@ export function createMockDaemon(db: MockDb = seed()): MockDaemon {
       }
       if (it.status === "draft") it.status = "ready";
       itemChanged(it);
-      return ok(newAgent(name, body, it));
+      const attachments = (body.attachments ?? []) as { name: string }[];
+      db.attachments ??= {};
+      if (attachments.length > 0 && !db.failAttachments)
+        db.attachments[key] = attachments.map((a) => ({ name: a.name }));
+      return ok({
+        ...newAgent(name, body, it),
+        ...(attachments.length > 0 && db.failAttachments ? { attachments_failed: true } : {}),
+      });
     });
   }
 

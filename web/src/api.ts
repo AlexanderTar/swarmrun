@@ -192,7 +192,11 @@ export function createApi({
     checkpoints: (key: string, limit = 50) =>
       call<Checkpoint[]>("GET", `/api/items/${enc(key)}/checkpoints${query({ limit })}`),
     startOrchestrator: (key: string, b: StartOrchestratorBody) =>
-      call<AgentNode>("POST", `/api/items/${enc(key)}/orchestrator`, b),
+      call<AgentNode & { attachments_failed?: boolean }>(
+        "POST",
+        `/api/items/${enc(key)}/orchestrator`,
+        b,
+      ),
     createSpike: (b: CreateSpikeBody) => call<CreateSpikeResponse>("POST", "/api/spikes", b),
     agents: (state: "active" | "all" = "active") =>
       call<AgentNode[]>("GET", `/api/agents${query({ state })}`),

@@ -319,4 +319,120 @@ describe("SpawnSheet (§16.10)", () => {
     expect(body.request).toBe("Look at this");
     expect(body.attachments).toEqual([{ name: "a.png", data: btoa("\x89PNG") }]);
   });
+
+  const pastePng = (request: HTMLElement, name = "a.png") =>
+    fireEvent.paste(request, {
+      clipboardData: { files: [png(name)], types: ["Files"], getData: () => "" },
+    });
+
+  it("maps a 413 to the too-large message and keeps the request and files", async () => {
+    const d = roomy();
+    d.db.force413 = true;
+    const { user } = renderWithDaemon(<SpawnSheet itemKey="EPIC-20" onClose={vi.fn()} />, {
+      daemon: d,
+      events: false,
+    });
+    const sheet = await screen.findByRole("dialog", { name: "Start orchestrator" });
+    const request = within(sheet).getByRole("textbox", { name: "Additional request (optional)" });
+    await user.type(request, "Look");
+    pastePng(request);
+    expect(await within(sheet).findByRole("img", { name: "a.png" })).toBeInTheDocument();
+    const body = sheet.querySelector<HTMLElement>(".overflow-y-auto") as HTMLElement;
+    let top = 120;
+    Object.defineProperty(body, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      set: (v: number) => {
+        top = v;
+      },
+    });
+    fireEvent.click(within(sheet).getByRole("button", { name: "Start orchestrator" }));
+    const title = await within(sheet).findByText(
+      "Couldn't start orchestrator. Your entries are saved.",
+    );
+    const alert = title.closest('[role="alert"]') as HTMLElement;
+    expect(alert.querySelector(":scope > svg")).not.toBeNull();
+    const text = alert.querySelector(":scope > div") as HTMLElement;
+    expect(text).toContainElement(title);
+    expect(text).toContainElement(
+      within(alert).getByText(
+        "The attachments are too large to send over remote access. Remove some and try again.",
+      ),
+    );
+    expect(top).toBe(0);
+    const retry = within(sheet).getByRole("button", { name: "Try again" });
+    await waitFor(() => expect(retry).toHaveFocus());
+    expect(request).toHaveValue("Look");
+    expect(within(sheet).getByRole("img", { name: "a.png" })).toBeInTheDocument();
+  });
+
+  it("shows the files-not-saved warning, the started state and Done", async () => {
+    const d = roomy();
+    d.db.failAttachments = true;
+    const onClose = vi.fn();
+    const { user } = renderWithDaemon(<SpawnSheet itemKey="EPIC-20" onClose={onClose} />, {
+      daemon: d,
+      events: false,
+    });
+    const sheet = await screen.findByRole("dialog", { name: "Start orchestrator" });
+    const request = within(sheet).getByRole("textbox", { name: "Additional request (optional)" });
+    await user.type(request, "Look");
+    pastePng(request);
+    await within(sheet).findByRole("img", { name: "a.png" });
+    const body = sheet.querySelector<HTMLElement>(".overflow-y-auto") as HTMLElement;
+    let top = 120;
+    Object.defineProperty(body, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      set: (v: number) => {
+        top = v;
+      },
+    });
+    await user.click(within(sheet).getByRole("button", { name: "Start orchestrator" }));
+    const alert = await within(sheet).findByText(
+      "Started, but the attachments could not be saved. Share them with the orchestrator another way.",
+    );
+    expect(alert.closest('[role="alert"]')).toBeInTheDocument();
+    expect(top).toBe(0);
+    expect(onClose).not.toHaveBeenCalled();
+    const done = within(sheet).getByRole("button", { name: "Done" });
+    expect(done).toHaveFocus();
+    expect(within(sheet).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(sheet.querySelector("[data-started]")).toHaveAttribute("inert");
+    expect(
+      within(sheet).queryByRole("button", { name: "Start orchestrator" }),
+    ).not.toBeInTheDocument();
+    await user.click(done);
+    expect(onClose).toHaveBeenCalled();
+    expect(await screen.findByText(/^(Started|Queued) /)).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "Escape",
+      async (user: ReturnType<typeof renderWithDaemon>["user"]) => user.keyboard("{Escape}"),
+    ],
+    [
+      "the close button",
+      async (user: ReturnType<typeof renderWithDaemon>["user"]) =>
+        user.click(screen.getByRole("button", { name: "Close" })),
+    ],
+  ])("treats %s as Done when files were not saved", async (_n, close) => {
+    const d = roomy();
+    d.db.failAttachments = true;
+    const onClose = vi.fn();
+    const { user } = renderWithDaemon(<SpawnSheet itemKey="EPIC-20" onClose={onClose} />, {
+      daemon: d,
+      events: false,
+    });
+    const sheet = await screen.findByRole("dialog", { name: "Start orchestrator" });
+    const request = within(sheet).getByRole("textbox", { name: "Additional request (optional)" });
+    pastePng(request);
+    await within(sheet).findByRole("img", { name: "a.png" });
+    await user.click(within(sheet).getByRole("button", { name: "Start orchestrator" }));
+    await within(sheet).findByRole("button", { name: "Done" });
+    await close(user);
+    expect(onClose).toHaveBeenCalled();
+    expect(await screen.findByText(/^(Started|Queued) /)).toBeInTheDocument();
+  });
 });

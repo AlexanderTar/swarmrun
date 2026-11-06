@@ -35,7 +35,7 @@ export interface MockDb {
   settings: Settings;
   catalog: AgentCatalogEntry[];
   repos: ReposResponse;
-  // Test switches for POST /api/spikes: save no attachments / answer 413 like the relay.
+  // Test switches for POST /api/spikes and POST /api/items/{key}/orchestrator.
   failAttachments?: boolean;
   force413?: boolean;
   attachments?: Record<string, { name: string }[]>;

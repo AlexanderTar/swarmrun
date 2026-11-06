@@ -1,4 +1,6 @@
-import { useId, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
+import { TriangleAlert } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { errorText } from "../api";
 import { AgentFields, type AgentFieldsValue } from "../components/AgentFields";
 import { RepoPicker } from "../components/RepoPicker";
@@ -45,7 +47,12 @@ function Form(p: {
   const [name, setName] = useState(() => defaultOrchestratorName(p.item.title));
   const [requestId, setRequestId] = useState(newRequestId);
   const [failure, setFailure] = useState<SubmitFailure>({});
-  const attachments = useRequestAttachments({ disabled: false });
+  const [started, setStarted] = useState<AgentNode & { attachments_failed?: boolean }>();
+  const attachments = useRequestAttachments({ disabled: !!started });
+  const notSaved = useRef<HTMLDivElement>(null);
+  const banner = useRef<HTMLDivElement>(null);
+  const done = useRef<HTMLButtonElement>(null);
+  const startButton = useRef<HTMLButtonElement>(null);
   const start = useMutation(
     (api, body: StartOrchestratorBody) => api.startOrchestrator(p.item.key, body),
     ["agents", "item:", "items"],
@@ -78,8 +85,8 @@ function Form(p: {
           requestId,
         ),
       );
-      toast.success(startedToast(agent, p.item.key));
-      p.onClose();
+      if (agent.attachments_failed) setStarted(agent);
+      else finish(agent);
     } catch (e) {
       setFailure(mapSubmitError(e));
       setRequestId(newRequestId());
@@ -87,12 +94,35 @@ function Form(p: {
     }
   };
 
+  const finish = (agent: AgentNode) => {
+    toast.success(startedToast(agent, p.item.key));
+    p.onClose();
+  };
+
+  // The alerts are the first children of the scrolling sheet body; bring them into view.
+  useEffect(() => {
+    const body = (
+      started ? notSaved.current : failure.banner ? banner.current : null
+    )?.closest<HTMLElement>(".overflow-y-auto");
+    if (body) body.scrollTop = 0;
+  }, [started, failure.banner]);
+
+  // Start unmounts when the launch lands, and the dialog's focus scope then reclaims focus; take it back for Done.
+  useEffect(() => {
+    if (started) done.current?.focus();
+  }, [started]);
+
+  // The disabled Start button drops focus while the request is in flight; hand it to Try again once the failure lands.
+  useEffect(() => {
+    if (failure.banner && !start.pending) startButton.current?.focus();
+  }, [failure.banner, start.pending]);
+
   return (
     <Sheet
       title={C.startOrchestrator}
       width={900}
       subtitle={`${p.item.key} · ${p.item.title}`}
-      onClose={p.onClose}
+      onClose={started ? () => finish(started) : p.onClose}
       footer={
         <>
           {busy && (
@@ -100,40 +130,68 @@ function Form(p: {
               {C.queuedCaption}
             </span>
           )}
-          <Button variant="secondary" onClick={p.onClose}>
+          <Button variant="secondary" disabled={!!started} onClick={p.onClose}>
             {C.cancel}
           </Button>
-          <Button
-            disabled={!valid || !connected || start.pending || attachments.pending > 0}
-            onClick={() => void submit()}
-          >
-            {failure.banner ? C.tryAgain : submitLabel(busy)}
-          </Button>
+          {started ? (
+            <Button ref={done} onClick={() => finish(started)}>
+              {C.done}
+            </Button>
+          ) : (
+            <Button
+              ref={startButton}
+              disabled={!valid || !connected || start.pending || attachments.pending > 0}
+              onClick={() => void submit()}
+            >
+              {failure.banner ? C.tryAgain : submitLabel(busy)}
+            </Button>
+          )}
         </>
       }
     >
-      {failure.banner && (
-        <Alert variant="destructive" role="alert">
-          <p>{failure.banner}</p>
-          {failure.detail && <p>{failure.detail}</p>}
+      {started && (
+        <Alert ref={notSaved} className="border-warning/40 text-warning">
+          <TriangleAlert />
+          <div>{C.imagesNotSaved}</div>
         </Alert>
       )}
-      <RepoPicker label={C.repositories} selected={repos} onChange={setRepos} />
-      <AgentFields value={fields} onChange={setFields} settings={p.settings} catalog={p.catalog} />
-      <div className="space-y-1.5">
-        <Label htmlFor={nameId}>{C.name}</Label>
-        <Input
-          id={nameId}
-          value={name}
-          onChange={(e) => {
-            setName(e.target.value);
-            setFailure((f) => ({ ...f, name: undefined }));
-          }}
-          className="key"
+      {failure.banner && (
+        <Alert ref={banner} variant="destructive" role="alert">
+          <TriangleAlert />
+          <div>
+            <p>{failure.banner}</p>
+            {failure.detail && <p className="mt-1">{failure.detail}</p>}
+          </div>
+        </Alert>
+      )}
+      <div
+        className={cn("space-y-4", started && "opacity-50")}
+        inert={started ? true : undefined}
+        aria-disabled={started ? true : undefined}
+        data-started={started ? true : undefined}
+      >
+        <RepoPicker label={C.repositories} selected={repos} onChange={setRepos} />
+        <AgentFields
+          value={fields}
+          onChange={setFields}
+          settings={p.settings}
+          catalog={p.catalog}
         />
-        {name !== "" && nameErr && <p className="text-xs text-destructive">{nameErr}</p>}
+        <div className="space-y-1.5">
+          <Label htmlFor={nameId}>{C.name}</Label>
+          <Input
+            id={nameId}
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              setFailure((f) => ({ ...f, name: undefined }));
+            }}
+            className="key"
+          />
+          {name !== "" && nameErr && <p className="text-xs text-destructive">{nameErr}</p>}
+        </div>
+        <RequestField label={C.additionalRequest} state={attachments} />
       </div>
-      <RequestField label={C.additionalRequest} state={attachments} />
     </Sheet>
   );
 }

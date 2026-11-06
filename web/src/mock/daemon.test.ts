@@ -403,6 +403,49 @@ describe("mock daemon", () => {
     expect(q.body).toMatchObject({ agent: { state: "queued", session: null }, queued: true });
   });
 
+  it("accepts a request and attachments on start, and its failure switches cover that route", () => {
+    const d = createMockDaemon();
+    d.db.settings.max_concurrent_agents = 8;
+    const body = {
+      request_id: "o-files",
+      agent: "claude",
+      model: "opus",
+      repos: [],
+      repos_version: 0,
+      name: "billing-files",
+      request: "Look at this",
+      attachments: [{ name: "a.png", data: "aQ==" }],
+    };
+    const okStart = call(d, "POST", "/api/items/EPIC-20/orchestrator", body);
+    expect(okStart.status).toBe(200);
+    expect(okStart.body).not.toHaveProperty("attachments_failed");
+    expect(d.db.attachments?.["EPIC-20"]).toEqual([{ name: "a.png" }]);
+
+    const saved = createMockDaemon();
+    saved.db.failAttachments = true;
+    saved.db.settings.max_concurrent_agents = 8;
+    const failed = call(saved, "POST", "/api/items/EPIC-20/orchestrator", {
+      ...body,
+      request_id: "o-fail",
+      name: "billing-unsaved",
+    });
+    expect(failed.status).toBe(200);
+    expect(failed.body).toMatchObject({
+      name: "billing-unsaved",
+      attachments_failed: true,
+    });
+    expect(saved.db.attachments?.["EPIC-20"]).toBeUndefined();
+
+    const huge = createMockDaemon();
+    huge.db.force413 = true;
+    const before = huge.db.items.find((i) => i.key === "EPIC-20")?.status;
+    expect(call(huge, "POST", "/api/items/EPIC-20/orchestrator", body)).toMatchObject({
+      status: 413,
+    });
+    expect(huge.db.items.find((i) => i.key === "EPIC-20")?.status).toBe(before);
+    expect(huge.db.agents.some((a) => a.name === "billing-files")).toBe(false);
+  });
+
   it("runs agent actions", () => {
     const d = createMockDaemon();
     expect(
