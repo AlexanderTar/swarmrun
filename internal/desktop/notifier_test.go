@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -348,5 +349,85 @@ func TestNotifierStopsRetryingWhenItsContextEnds(t *testing.T) {
 	case <-stopped:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the notifier kept retrying after its context ended")
+	}
+}
+
+// hung is a notify-send that runs until its done channel closes.
+func hung(done chan struct{}, kill func()) *execx.Detached {
+	return &execx.Detached{Done: done, Err: func() error { return nil }, Kill: kill}
+}
+
+// With no notification daemon on the bus every notify-send hangs for the whole
+// timeout: one at a time, a burst of 20 would take over 3 minutes to show.
+func TestNotifierStartsTheNextNotifySendWithoutWaiting(t *testing.T) {
+	e := newNotifierEnv(t)
+	e.n.Timeout = time.Hour
+	e.proc = func() *execx.Detached { return hung(make(chan struct{}), func() {}) }
+	e.run(t)
+	for i := range 3 {
+		e.feed.add(events.NotificationCreated, notification("info", fmt.Sprint("Burst ", i), "x"), false)
+	}
+	waitSends(t, e, 3)
+}
+
+func TestNotifierBoundsTheNotifySendsInFlight(t *testing.T) {
+	e := newNotifierEnv(t)
+	e.n.Timeout = time.Hour
+	var dones []chan struct{}
+	e.proc = func() *execx.Detached { // called with e.mu held
+		done := make(chan struct{})
+		dones = append(dones, done)
+		return hung(done, func() {})
+	}
+	e.run(t)
+	for i := range notifyInFlight + 2 {
+		e.feed.add(events.NotificationCreated, notification("info", fmt.Sprint("Burst ", i), "x"), false)
+	}
+	waitSends(t, e, notifyInFlight)
+	time.Sleep(50 * time.Millisecond)
+	e.mu.Lock()
+	sent := len(e.sent)
+	first := dones[0]
+	e.mu.Unlock()
+	if sent != notifyInFlight {
+		t.Fatalf("started %d notify-sends at once, want at most %d", sent, notifyInFlight)
+	}
+	close(first)
+	waitSends(t, e, notifyInFlight+1) // one finishing lets the next start
+}
+
+func TestNotifierReadsTheSessionOncePerBatch(t *testing.T) {
+	e := newNotifierEnv(t)
+	var reads atomic.Int32
+	run := e.n.Launcher.Run
+	e.n.Launcher.Run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		reads.Add(1)
+		return run(ctx, name, args...)
+	}
+	for i := range 5 { // quiet: all five are there for the first drain
+		e.feed.add(events.NotificationCreated, notification("info", fmt.Sprint("Burst ", i), "x"), true)
+	}
+	e.run(t)
+	waitSends(t, e, 5)
+	if got := reads.Load(); got != 1 {
+		t.Fatalf("read the session %d times for one batch, want 1", got)
+	}
+}
+
+func TestNotifierKillsItsNotifySendsBeforeItStops(t *testing.T) {
+	e := newNotifierEnv(t)
+	e.n.Timeout = time.Hour
+	var killed atomic.Bool
+	e.proc = func() *execx.Detached { return hung(make(chan struct{}), func() { killed.Store(true) }) }
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); e.n.Run(ctx) }()
+	<-e.feed.read
+	e.feed.add(events.NotificationCreated, notification("info", "Hangs", "x"), false)
+	waitSends(t, e, 1)
+	cancel()
+	<-stopped
+	if !killed.Load() {
+		t.Fatal("the notifier stopped with a notify-send still running")
 	}
 }

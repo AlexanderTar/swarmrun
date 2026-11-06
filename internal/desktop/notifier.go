@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AlexanderTar/swarmrun/internal/events"
+	"github.com/AlexanderTar/swarmrun/internal/execx"
 	"github.com/AlexanderTar/swarmrun/internal/settings"
 )
 
@@ -39,6 +40,9 @@ type Notifier struct {
 
 	mu     sync.Mutex
 	warned map[string]bool
+
+	slots   chan struct{}  // one per notify-send running
+	reapers sync.WaitGroup // Run waits for these, so none outlives it
 }
 
 // notifyBatch is how many events one read takes, as the SSE stream does.
@@ -48,6 +52,11 @@ const notifyBatch = 500
 // once, and one stuck on an unresponsive notification daemon must not hold up
 // the next notification.
 const notifyTimeout = 10 * time.Second
+
+// notifyInFlight is how many notify-sends may run at once. A hung one holds its
+// slot until the timeout, so a burst neither queues behind it nor starts a
+// process per event.
+const notifyInFlight = 8
 
 // notifyRetry and notifyRetryMax are the first and longest waits between
 // attempts to start.
@@ -61,6 +70,8 @@ const (
 // event committed between those steps is still shown; notifications from
 // before the start are not replayed.
 func (n *Notifier) Run(ctx context.Context) {
+	n.slots = make(chan struct{}, notifyInFlight)
+	defer n.reapers.Wait()
 	wake, unsubscribe := n.Events.Subscribe()
 	defer unsubscribe()
 	cursor, ok := n.start(ctx)
@@ -113,10 +124,11 @@ func (n *Notifier) drain(ctx context.Context, cursor int64) int64 {
 			}
 			return cursor
 		}
+		env := sync.OnceValues(func() ([]string, bool) { return n.notifyEnv(ctx) })
 		for _, e := range evs {
 			cursor = e.Seq
 			if e.Type == events.NotificationCreated {
-				n.show(ctx, e.Payload)
+				n.show(ctx, e.Payload, env)
 			}
 		}
 		if len(evs) < notifyBatch {
@@ -126,7 +138,25 @@ func (n *Notifier) drain(ctx context.Context, cursor int64) int64 {
 	return cursor
 }
 
-func (n *Notifier) show(ctx context.Context, payload json.RawMessage) {
+// notifyEnv is notify-send's environment, read once per batch: a burst must not
+// pay for `systemctl --user show-environment` on every banner.
+func (n *Notifier) notifyEnv(ctx context.Context) ([]string, bool) {
+	if _, err := n.Launcher.LookPath("notify-send"); err != nil {
+		n.once("notify-send", "desktop notifications: notify-send isn't installed (libnotify-bin); notifications only show on the board")
+		return nil, false
+	}
+	session, err := n.Launcher.SessionEnv(ctx)
+	if errors.Is(err, ErrNoSession) {
+		n.once("session", "desktop notifications: no desktop session; notifications only show on the board")
+		return nil, false
+	} else if err != nil {
+		n.logf("desktop notifications: %v", err)
+		return nil, false
+	}
+	return childEnv(n.Launcher.Environ(), session), true
+}
+
+func (n *Notifier) show(ctx context.Context, payload json.RawMessage, notifyEnv func() ([]string, bool)) {
 	var p struct {
 		Level   string `json:"level"`
 		Title   string `json:"title"`
@@ -146,24 +176,22 @@ func (n *Notifier) show(ctx context.Context, payload json.RawMessage) {
 	if !pref.Center {
 		return
 	}
-	if _, err := n.Launcher.LookPath("notify-send"); err != nil {
-		n.once("notify-send", "desktop notifications: notify-send isn't installed (libnotify-bin); notifications only show on the board")
-		return
-	}
-	session, err := n.Launcher.SessionEnv(ctx)
-	if errors.Is(err, ErrNoSession) {
-		n.once("session", "desktop notifications: no desktop session; notifications only show on the board")
-		return
-	} else if err != nil {
-		n.logf("desktop notifications: %v", err)
+	env, ok := notifyEnv()
+	if !ok {
 		return
 	}
 	body := p.Body
 	if p.ItemKey != "" && !strings.Contains(body, p.ItemKey) {
 		body += " (" + p.ItemKey + ")" // some bodies leave the item out, e.g. agent.queued
 	}
-	proc, err := n.Launcher.Start(childEnv(n.Launcher.Environ(), session), "notify-send", NotifyArgs(p.Level, p.Title, body, pref.Sound)...)
+	select {
+	case n.slots <- struct{}{}:
+	case <-ctx.Done():
+		return
+	}
+	proc, err := n.Launcher.Start(env, "notify-send", NotifyArgs(p.Level, p.Title, body, pref.Sound)...)
 	if err != nil {
+		<-n.slots
 		n.logf("desktop notifications: notify-send: %v", err)
 		return
 	}
@@ -171,8 +199,18 @@ func (n *Notifier) show(ctx context.Context, payload json.RawMessage) {
 	if timeout == 0 {
 		timeout = notifyTimeout
 	}
-	// Wait for it, so a failure (no notification daemon on the bus) is
-	// logged and no notify-send outlives the daemon's shutdown.
+	n.reapers.Add(1)
+	go func() {
+		defer n.reapers.Done()
+		defer func() { <-n.slots }()
+		n.reap(ctx, proc, timeout)
+	}()
+}
+
+// reap waits for one notify-send, off the drain loop so the next banner is not
+// held up, so a failure (no notification daemon on the bus) is logged and no
+// notify-send outlives the daemon's shutdown.
+func (n *Notifier) reap(ctx context.Context, proc *execx.Detached, timeout time.Duration) {
 	select {
 	case <-proc.Done:
 		if err := proc.Err(); err != nil {
