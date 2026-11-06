@@ -694,8 +694,19 @@ func TestLinuxCopyCommandPicksTheToolForTheDisplay(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+		// PATH is the stubs and what they need, never the host's folders: a real
+		// clipboard tool there would run in place of one the case leaves out.
+		for _, tool := range []string{"cat", "basename"} {
+			host, err := exec.LookPath(tool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(host, filepath.Join(dir, tool)); err != nil {
+				t.Fatal(err)
+			}
+		}
 		cmd := exec.Command("/bin/sh", "-c", linuxCopy)
-		cmd.Env = append([]string{"PATH=" + dir + ":/usr/bin:/bin"}, tc.env...)
+		cmd.Env = append([]string{"PATH=" + dir}, tc.env...)
 		cmd.Stdin = strings.NewReader("selected text")
 		if b, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s: %v: %s", tc.name, err, b)
