@@ -72,6 +72,8 @@ public final class BoardHandoffForm {
     public private(set) var loadError: String?
     public private(set) var failure: String?
     public private(set) var submitting = false
+    public var request = ""
+    public let attachments = RequestImagesModel()
     public var connected: Bool
 
     private let client: DaemonClient
@@ -88,6 +90,7 @@ public final class BoardHandoffForm {
 
     private struct Attempt: Equatable {
         var key: String, agent: AgentKind, model: String, effort: String?, advisor: AdvisorPayload, roles: [String: RoleDefault]?
+        var request: String, attachments: [AttachmentPayload]?
     }
 
     public init(client: DaemonClient, settings: Settings, agents: [AgentNode], connected: Bool, preselectAgent: String?) {
@@ -234,20 +237,24 @@ public final class BoardHandoffForm {
         if loadError != nil { await load(); return false }
         guard canSubmit, let row = selected, let agent = picker.choice.agent else { return false }
         let roles = workerRolesPayload
+        let text = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        let files = attachments.payload
         let attempt = Attempt(key: row.id, agent: agent, model: picker.choice.model, effort: picker.effortPayload,
-                              advisor: picker.advisorPayload, roles: roles)
+                              advisor: picker.advisorPayload, roles: roles, request: text, attachments: files)
         if let last = lastAttempt, last != attempt { requestID = UUID().uuidString }
         lastAttempt = attempt
         submitting = true
         defer { submitting = false }
         let base = row.orchestrator != nil ? Copy.handoffFailed : Copy.launchFailed
+        let entryRequest = text.isEmpty ? nil : text
         do {
             if let orch = row.orchestrator {
-                try await client.handoff(orch.name, HandoffRequest(requestId: requestID, agent: agent, model: attempt.model,
-                                                                   effort: attempt.effort, advisor: attempt.advisor, roles: roles))
+                _ = try await client.handoff(orch.name, HandoffRequest(requestId: requestID, agent: agent, model: attempt.model,
+                    effort: attempt.effort, advisor: attempt.advisor, roles: roles, request: entryRequest, attachments: files))
             } else {
                 _ = try await client.startOrchestrator(itemKey: row.id, StartOrchestratorBody(requestId: requestID, agent: agent,
-                    model: attempt.model, effort: attempt.effort, advisor: attempt.advisor, roles: roles))
+                    model: attempt.model, effort: attempt.effort, advisor: attempt.advisor, roles: roles,
+                    request: entryRequest, attachments: files))
             }
             failure = nil
             return true

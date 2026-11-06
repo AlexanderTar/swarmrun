@@ -48,9 +48,10 @@ public protocol DaemonClient: Sendable {
     /// GET /api/items?view=flat.
     func boardItems() async throws -> [BoardItem]
     /// POST /api/items/{key}/orchestrator.
-    func startOrchestrator(itemKey: String, _ body: StartOrchestratorBody) async throws -> AgentNode
-    /// POST /api/agents/{name}/handoff with optional agent/model/effort/advisor picks (202, body ignored).
-    func handoff(_ name: String, _ body: HandoffRequest) async throws
+    func startOrchestrator(itemKey: String, _ body: StartOrchestratorBody) async throws -> StartedOrchestrator
+    /// POST /api/agents/{name}/handoff with optional agent/model/effort/advisor picks (202).
+    /// The result carries `attachments_failed` when the daemon could not save the attached files.
+    func handoff(_ name: String, _ body: HandoffRequest) async throws -> HandoffResult
     func terminalOpened(name: String) async throws
     func pane(_ name: String, lines: Int) async throws -> PaneCapture
 }
@@ -74,7 +75,7 @@ public final class MockDaemonClient: DaemonClient {
     public var boardItemList: [BoardItem] = []
     /// Fails only `boardItems()` (`failNext` would be consumed by a parallel `catalog()`).
     public var boardItemsError: DaemonError?
-    public var startResult: Result<AgentNode, DaemonError>?
+    public var startResult: Result<StartedOrchestrator, DaemonError>?
     public private(set) var handoffRequests: [HandoffRequest] = []
     public private(set) var startBodies: [StartOrchestratorBody] = []
     public var failNext: DaemonError?
@@ -266,16 +267,19 @@ public final class MockDaemonClient: DaemonClient {
         return boardItemList
     }
 
-    public func startOrchestrator(itemKey: String, _ body: StartOrchestratorBody) async throws -> AgentNode {
+    public func startOrchestrator(itemKey: String, _ body: StartOrchestratorBody) async throws -> StartedOrchestrator {
         startBodies.append(body)
         try record("start \(itemKey) \(body.agent.rawValue) \(body.model)")
-        return try (startResult ?? .success(AgentNode(name: "new-orchestrator", model: body.model, role: .orchestrator,
-                                                      itemKey: itemKey, rootKey: itemKey))).get()
+        return try (startResult ?? .success(StartedOrchestrator(agent: AgentNode(name: "new-orchestrator", model: body.model,
+            role: .orchestrator, itemKey: itemKey, rootKey: itemKey)))).get()
     }
 
-    public func handoff(_ name: String, _ body: HandoffRequest) async throws {
+    public var handoffResult: Result<HandoffResult, DaemonError>?
+
+    public func handoff(_ name: String, _ body: HandoffRequest) async throws -> HandoffResult {
         handoffRequests.append(body)
         try record("handoff \(name) \(body.agent?.rawValue ?? "-") \(body.model ?? "-")")
+        return try (handoffResult ?? .success(HandoffResult())).get()
     }
 
     public func terminalOpened(name: String) async throws {

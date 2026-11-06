@@ -252,6 +252,64 @@ final class HTTPDaemonClientTests: XCTestCase {
                        try Fixture.json(Data(#"{"request_id":"r","agent":"claude","model":"opus","advisor":"none","roles":{"coder":{"agent":"codex","model":"gpt-6-astra","effort":"high"}}}"#.utf8)))
     }
 
+    func testStartOrchestratorSendsRequestAndAttachments() async throws {
+        let session = StubURLProtocol.install { _ in (200, try Fixture.data("agent.json")) }
+        let client = HTTPDaemonClient(endpoint: try tempEndpoint(), session: session)
+        let payload = AttachmentPayload(name: "a.png", data: Data("x".utf8).base64EncodedString())
+        _ = try await client.startOrchestrator(itemKey: "BUG-7", StartOrchestratorBody(requestId: "r", agent: .claude,
+            model: "opus", effort: nil, advisor: .none, request: "read this", attachments: [payload]))
+        let body = try XCTUnwrap(StubURLProtocol.seen.last).body
+        let sent = try Fixture.json(Data(body.utf8))
+        let want = try Fixture.json(Data(#"{"request_id":"r","agent":"claude","model":"opus","advisor":"none","request":"read this","attachments":[{"name":"a.png","data":"eA=="}]}"#.utf8))
+        XCTAssertEqual(sent, want)
+    }
+
+    func testStartOrchestratorOmitsRequestAndAttachmentsWhenEmpty() throws {
+        let body = StartOrchestratorBody(requestId: "r", agent: .claude, model: "opus", effort: nil, advisor: .none)
+        let encoded = try String(data: SwarmJSON.encode(body), encoding: .utf8) ?? ""
+        XCTAssertFalse(encoded.contains("request\"") || encoded.contains("attachments"), encoded)
+    }
+
+    func testHandoffSendsRequestAndAttachments() async throws {
+        let session = StubURLProtocol.install { _ in (202, Data("{}".utf8)) }
+        let client = HTTPDaemonClient(endpoint: try tempEndpoint(), session: session)
+        let payload = AttachmentPayload(name: "a.png", data: Data("x".utf8).base64EncodedString())
+        try await client.handoff("o", HandoffRequest(requestId: "k3", request: "read this", attachments: [payload]))
+        let body = try XCTUnwrap(StubURLProtocol.seen.last).body
+        XCTAssertEqual(try Fixture.json(Data(body.utf8)),
+                       try Fixture.json(Data(#"{"request_id":"k3","request":"read this","attachments":[{"name":"a.png","data":"eA=="}]}"#.utf8)))
+    }
+
+    func testRowActionHandoffBodyStaysRequestIDOnly() async throws {
+        let session = StubURLProtocol.install { _ in (202, Data("{}".utf8)) }
+        let client = HTTPDaemonClient(endpoint: try tempEndpoint(), session: session)
+        try await client.agent("login-form-coder", .handoff, scope: nil, requestID: "key-9")
+        let seen = try XCTUnwrap(StubURLProtocol.seen.last)
+        XCTAssertEqual(try Fixture.json(Data(seen.body.utf8)), try Fixture.json(Data(#"{"request_id":"key-9"}"#.utf8)))
+    }
+
+    private func flatAgentJSON(attachmentsFailed: Bool?) throws -> Data {
+        var obj = try XCTUnwrap(JSONSerialization.jsonObject(with: Fixture.data("agent.json")) as? [String: Any])
+        if let attachmentsFailed { obj["attachments_failed"] = attachmentsFailed }
+        return try JSONSerialization.data(withJSONObject: obj)
+    }
+
+    func testStartedOrchestratorDecodesFlatWithAndWithoutFlag() throws {
+        let flagged = try SwarmJSON.decode(StartedOrchestrator.self, from: flatAgentJSON(attachmentsFailed: true))
+        XCTAssertEqual(flagged.attachmentsFailed, true)
+        XCTAssertFalse(flagged.agent.name.isEmpty)
+        let plain = try SwarmJSON.decode(StartedOrchestrator.self, from: flatAgentJSON(attachmentsFailed: nil))
+        XCTAssertNil(plain.attachmentsFailed)
+        XCTAssertEqual(plain.agent, flagged.agent)
+    }
+
+    func testHandoffResultDecodesWithAndWithoutFlag() throws {
+        XCTAssertEqual(try SwarmJSON.decode(HandoffResult.self, from: Data(#"{"attachments_failed":true}"#.utf8)),
+                       HandoffResult(attachmentsFailed: true))
+        XCTAssertEqual(try SwarmJSON.decode(HandoffResult.self, from: Data("{}".utf8)),
+                       HandoffResult(attachmentsFailed: nil))
+    }
+
     func testBoardItemsDecodesFlatListIncludingUnknownTypes() async throws {
         let session = StubURLProtocol.install { _ in (200, try Fixture.data("items.json")) }
         let client = HTTPDaemonClient(endpoint: try tempEndpoint(), session: session)

@@ -162,6 +162,66 @@ final class BoardHandoffTests: XCTestCase {
         XCTAssertNotEqual(client.handoffRequests[0].requestId, client.handoffRequests[1].requestId)
     }
 
+    func testStartAndHandoffBodiesCarryEntriesOnlyWhenPresent() async throws {
+        let handoff = await form(preselect: "auth-epic-orchestrator")
+        handoff.request = "read this"
+        handoff.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        let handoffClosed = await handoff.primary()
+        XCTAssertTrue(handoffClosed)
+        let sentHandoff = try XCTUnwrap(client.handoffRequests.last)
+        XCTAssertEqual(sentHandoff.request, "read this")
+        XCTAssertEqual(sentHandoff.attachments, [AttachmentPayload(name: "a.txt", data: Data("x".utf8).base64EncodedString())])
+
+        let start = await form()
+        start.selectedKey = "CHORE-3"
+        start.request = "  "
+        let startClosed = await start.primary()
+        XCTAssertTrue(startClosed)
+        let sentStart = try XCTUnwrap(client.startBodies.last)
+        XCTAssertNil(sentStart.request)
+        XCTAssertNil(sentStart.attachments)
+    }
+
+    func testRetryAfterEditingRequestUsesNewRequestID() async throws {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        client.failNext = .timedOut
+        let first = await f.primary()
+        XCTAssertFalse(first)
+        f.request = "read this"
+        let second = await f.primary()
+        XCTAssertTrue(second)
+        XCTAssertEqual(client.handoffRequests.count, 2)
+        XCTAssertNotEqual(client.handoffRequests[0].requestId, client.handoffRequests[1].requestId)
+        XCTAssertEqual(try XCTUnwrap(client.handoffRequests.last).request, "read this")
+    }
+
+    func testRetryAfterEditingFilesUsesNewRequestID() async throws {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        client.failNext = .timedOut
+        let first = await f.primary()
+        XCTAssertFalse(first)
+        f.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        let second = await f.primary()
+        XCTAssertTrue(second)
+        XCTAssertEqual(client.handoffRequests.count, 2)
+        XCTAssertNotEqual(client.handoffRequests[0].requestId, client.handoffRequests[1].requestId)
+        XCTAssertEqual(try XCTUnwrap(client.handoffRequests.last).attachments?.map(\.name), ["a.txt"])
+    }
+
+    func testUnchangedRetryWithEntriesReusesRequestID() async throws {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        f.request = "read this"
+        f.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        client.failNext = .timedOut
+        let first = await f.primary()
+        XCTAssertFalse(first)
+        let second = await f.primary()
+        XCTAssertTrue(second)
+        XCTAssertEqual(client.handoffRequests.count, 2)
+        XCTAssertEqual(client.handoffRequests[0].requestId, client.handoffRequests[1].requestId)
+        XCTAssertEqual(try XCTUnwrap(client.handoffRequests.last).request, "read this")
+    }
+
     func testReadyStartUsesStartEndpoint() async {
         let f = await form()
         f.selectedKey = "CHORE-3"

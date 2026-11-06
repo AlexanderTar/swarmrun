@@ -171,12 +171,12 @@ public final class HTTPDaemonClient: DaemonClient {
         try await call("GET", "/api/items?view=flat", as: BoardItemList.self).items
     }
 
-    public func startOrchestrator(itemKey: String, _ body: StartOrchestratorBody) async throws -> AgentNode {
+    public func startOrchestrator(itemKey: String, _ body: StartOrchestratorBody) async throws -> StartedOrchestrator {
         try await call("POST", "/api/items/\(Self.segment(itemKey))/orchestrator", body: body, timeout: 60)
     }
 
-    public func handoff(_ name: String, _ body: HandoffRequest) async throws {
-        _ = try await call("POST", "/api/agents/\(Self.segment(name))/handoff", body: body, timeout: 60, as: Empty.self)
+    public func handoff(_ name: String, _ body: HandoffRequest) async throws -> HandoffResult {
+        try await call("POST", "/api/agents/\(Self.segment(name))/handoff", body: body, timeout: 60)
     }
 
     public func terminalOpened(name: String) async throws {

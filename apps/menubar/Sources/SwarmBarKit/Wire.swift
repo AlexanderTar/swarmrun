@@ -850,13 +850,34 @@ public struct StartOrchestratorBody: Codable, Sendable, Equatable {
     public var effort: String?
     public var advisor: AdvisorPayload
     public var roles: [String: RoleDefault]?
+    public var request: String?
+    public var attachments: [AttachmentPayload]?
 
-    enum CodingKeys: String, CodingKey { case agent, model, effort, advisor, roles, requestId = "request_id" }
+    enum CodingKeys: String, CodingKey { case agent, model, effort, advisor, roles, request, attachments, requestId = "request_id" }
 
     public init(requestId: String, agent: AgentKind, model: String, effort: String?, advisor: AdvisorPayload,
-                roles: [String: RoleDefault]? = nil) {
+                roles: [String: RoleDefault]? = nil, request: String? = nil, attachments: [AttachmentPayload]? = nil) {
         self.requestId = requestId; self.agent = agent; self.model = model; self.effort = effort; self.advisor = advisor
-        self.roles = roles
+        self.roles = roles; self.request = request; self.attachments = attachments
+    }
+}
+
+/// POST /api/items/{key}/orchestrator returns the agent node flat, plus
+/// `attachments_failed` when the daemon could not save the attached files.
+public struct StartedOrchestrator: Decodable, Sendable, Equatable {
+    public var agent: AgentNode
+    public var attachmentsFailed: Bool?
+
+    enum CodingKeys: String, CodingKey { case agent, attachmentsFailed = "attachments_failed" }
+
+    public init(agent: AgentNode, attachmentsFailed: Bool? = nil) {
+        self.agent = agent; self.attachmentsFailed = attachmentsFailed
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        attachmentsFailed = try c.decodeIfPresent(Bool.self, forKey: .attachmentsFailed)
+        agent = try AgentNode(from: decoder)
     }
 }
 
@@ -869,12 +890,24 @@ public struct HandoffRequest: Codable, Sendable, Equatable {
     public var effort: String?
     public var advisor: AdvisorPayload?
     public var roles: [String: RoleDefault]?
+    public var request: String?
+    public var attachments: [AttachmentPayload]?
 
-    enum CodingKeys: String, CodingKey { case agent, model, effort, advisor, roles, requestId = "request_id" }
+    enum CodingKeys: String, CodingKey { case agent, model, effort, advisor, roles, request, attachments, requestId = "request_id" }
 
     public init(requestId: String, agent: AgentKind? = nil, model: String? = nil, effort: String? = nil, advisor: AdvisorPayload? = nil,
-                roles: [String: RoleDefault]? = nil) {
+                roles: [String: RoleDefault]? = nil, request: String? = nil, attachments: [AttachmentPayload]? = nil) {
         self.requestId = requestId; self.agent = agent; self.model = model; self.effort = effort; self.advisor = advisor
-        self.roles = roles
+        self.roles = roles; self.request = request; self.attachments = attachments
     }
+}
+
+/// POST /api/agents/{name}/handoff returns `attachments_failed` when the
+/// daemon could not save the attached files; `{}` otherwise.
+public struct HandoffResult: Decodable, Sendable, Equatable {
+    public var attachmentsFailed: Bool?
+
+    enum CodingKeys: String, CodingKey { case attachmentsFailed = "attachments_failed" }
+
+    public init(attachmentsFailed: Bool? = nil) { self.attachmentsFailed = attachmentsFailed }
 }
