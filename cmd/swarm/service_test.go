@@ -103,3 +103,27 @@ func TestUninstallNamesTheServiceItRemoved(t *testing.T) {
 		}
 	}
 }
+
+// Homebrew's installer leaves adding itself to PATH to the shell profile, so
+// `swarm install` from such a shell must not move the daemon onto the
+// distribution's older tmux.
+func TestNewConfigKeepsHomebrewOnTheLinuxDaemonsPath(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	saved := dirExists
+	t.Cleanup(func() { dirExists = saved })
+	dirExists = func(string) bool { return true }
+	const brew = "/home/linuxbrew/.linuxbrew/bin"
+
+	pinGOOS(t, "linux")
+	c, err := newConfig(filepath.Join(t.TempDir(), ".swarm"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(c.Path, brew+":/usr/bin") {
+		t.Errorf("linux PATH = %q, want Homebrew ahead of /usr/bin", c.Path)
+	}
+	pinGOOS(t, "darwin")
+	if c, _ = newConfig(filepath.Join(t.TempDir(), ".swarm")); strings.Contains(c.Path, "linuxbrew") {
+		t.Errorf("darwin PATH = %q, want no Linux Homebrew", c.Path)
+	}
+}

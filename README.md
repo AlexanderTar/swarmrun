@@ -145,7 +145,7 @@ Install:
 curl -fsSL https://swarmrun.dev/install.sh | sh
 ```
 
-The installer needs a systemd user session, `git`, `make` and [Homebrew on Linux](https://docs.brew.sh/Homebrew-on-Linux). It installs Go, tmux, pnpm, uv, Node and Ollama from Homebrew, pulls the embedding model, builds Swarm and runs `swarm install`. Homebrew goes first on the daemon's `PATH`, so the daemon uses Homebrew's tmux rather than an older distribution one. It does not install a terminal emulator, `notify-send` or the clipboard tools. It starts Ollama only for the model download; `brew services start ollama` keeps it running after a restart.
+The installer needs a systemd user session, `git`, `make` and [Homebrew on Linux](https://docs.brew.sh/Homebrew-on-Linux). It installs Go, tmux, pnpm, uv, Node and Ollama from Homebrew, pulls the embedding model, builds Swarm and runs `swarm install`. `swarm install` keeps Homebrew ahead of `/usr/bin` on the daemon's `PATH`, so the daemon uses Homebrew's tmux rather than an older distribution one. It does not install a terminal emulator, `notify-send` or the clipboard tools. It starts Ollama only for the model download; `brew services start ollama` keeps it running after a restart.
 
 Or build it by hand:
 

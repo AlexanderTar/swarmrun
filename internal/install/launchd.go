@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/AlexanderTar/swarmrun/internal/db"
@@ -71,6 +72,29 @@ func LaunchPath(callerPath, userHome string) string {
 		add(p)
 	}
 	return strings.Join(out, ":")
+}
+
+// linuxbrewBin is where Homebrew on Linux installs by default.
+const linuxbrewBin = "/home/linuxbrew/.linuxbrew/bin"
+
+// LinuxPath is LaunchPath's result for the systemd unit: Homebrew on Linux, when
+// it is there, comes ahead of /usr/bin. Its installer leaves adding it to PATH to
+// the shell profile, so `swarm install` from a shell without it would otherwise
+// put the daemon on the distribution's tmux, older than 3.6, and take Homebrew's
+// tools away from the agents.
+func LinuxPath(path string, isDir func(string) bool) string {
+	if !isDir(linuxbrewBin) {
+		return path
+	}
+	parts := strings.Split(path, ":")
+	usr, brew := slices.Index(parts, "/usr/bin"), slices.Index(parts, linuxbrewBin)
+	if usr < 0 || (brew >= 0 && brew < usr) {
+		return path
+	}
+	if brew >= 0 {
+		parts = slices.Delete(parts, brew, brew+1)
+	}
+	return strings.Join(slices.Insert(parts, usr, linuxbrewBin), ":")
 }
 
 func esc(s string) string {

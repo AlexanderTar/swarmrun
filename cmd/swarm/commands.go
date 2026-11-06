@@ -28,6 +28,7 @@ import (
 var (
 	// goos picks the service manager: launchd on macOS, systemd on Linux.
 	goos               = runtime.GOOS
+	dirExists          = func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() }
 	installLaunchd     = install.Install
 	installAgents      = install.Agents
 	installUninstall   = install.Uninstall
@@ -57,6 +58,7 @@ func newConfig(home string) (install.Config, error) {
 	}
 	if goos == "linux" {
 		cfg.Manager = install.Systemd
+		cfg.Path = install.LinuxPath(cfg.Path, dirExists)
 	}
 	return cfg, nil
 }
