@@ -53,12 +53,16 @@ func (l Launcher) SessionEnv(ctx context.Context) (map[string]string, error) {
 
 // childEnv is base with every session key replaced by session's: a key the
 // session lacks (a display found dead, an XAUTHORITY the desktop no longer
-// sets) is removed, never left at the daemon's possibly stale value.
+// sets) is removed, never left at the daemon's possibly stale value. The
+// daemon's SWARM_* settings are left out too: only the installed daemon may
+// have them (S-1, S-4), and a dev daemon started from a shell in a window the
+// board opened would inherit them. A terminal's command names its tmux socket
+// in its arguments, so it does not need them.
 func childEnv(base []string, session map[string]string) []string {
 	var out []string
 	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
-		if !slices.Contains(sessionKeys, k) {
+		if !slices.Contains(sessionKeys, k) && !strings.HasPrefix(k, "SWARM_") {
 			out = append(out, kv)
 		}
 	}

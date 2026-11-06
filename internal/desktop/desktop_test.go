@@ -220,3 +220,24 @@ func TestOpenDropsTheDaemonsStaleDisplayVariables(t *testing.T) {
 		t.Fatalf("env = %q, want %q (no stale WAYLAND_DISPLAY or XAUTHORITY)", got, want)
 	}
 }
+
+// A shell in a window the board opened must not carry the installed daemon's
+// settings: a dev daemon started from it would use the live tmux server, poll
+// real usage and pop banners (S-1, S-4). On macOS, Ghostty never sees them.
+func TestOpenLeavesOutTheDaemonsSwarmEnvironment(t *testing.T) {
+	e := &launcherEnv{showEnv: execx.Result{Out: liveSession},
+		exists: map[string]bool{"/run/user/1000/wayland-1": true, "/tmp/.X11-unix/X1": true}}
+	l := e.launcher()
+	l.Environ = func() []string {
+		return []string{"PATH=/usr/bin", "SWARM_HOME=/home/a/.swarm", "SWARM_TMUX_SOCKET=swarm",
+			"SWARM_USAGE=live", "SWARM_NOTIFY=desktop", "SWARMLIKE=kept"}
+	}
+	if err := l.Open(bg, attach); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"PATH=/usr/bin", "SWARMLIKE=kept", "WAYLAND_DISPLAY=wayland-1", "DISPLAY=:1",
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus", "XDG_RUNTIME_DIR=/run/user/1000"}
+	if got := e.envs[0]; !slices.Equal(got, want) {
+		t.Errorf("env = %q, want %q", got, want)
+	}
+}
