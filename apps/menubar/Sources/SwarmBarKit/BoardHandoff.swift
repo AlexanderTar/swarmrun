@@ -115,7 +115,7 @@ public final class BoardHandoffForm {
         rows = BoardHandoffRules.rows(items, agents: agents)
         if let p = preselectAgent, let row = rows.first(where: { $0.orchestrator?.name == p }) { selectedKey = row.id }
         preselectAgent = nil
-        if selected == nil { selectedKey = rows.first?.id }
+        if selected == nil { selectedKey = hasEntries ? nil : rows.first?.id }
         loading = false
     }
 
@@ -133,7 +133,7 @@ public final class BoardHandoffForm {
 
     /// Typed text or files, kept across selection and agent updates.
     public var hasEntries: Bool {
-        !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachments.payload != nil
+        !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.images.isEmpty
     }
 
     /// "Hand off to…" while the window is open: move the selection to the

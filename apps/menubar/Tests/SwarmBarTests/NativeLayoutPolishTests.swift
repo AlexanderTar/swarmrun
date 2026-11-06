@@ -72,13 +72,13 @@ final class NativeLayoutPolishTests: XCTestCase {
         let form = model.makeBoardHandoffForm()
         await form.load()
         form.selectedKey = "BUG-7"
-        let view = host(BoardHandoffView(form: form, onDone: {}, onCancel: {}), width: 760, height: 500)
+        let view = host(BoardHandoffView(form: form, onDone: {}, onCancel: {}), width: 820, height: 500)
         let controls = descendants(view).compactMap { $0 as? NSPopUpButton }
         XCTAssertNotNil(controls.first { $0.accessibilityLabel() == "Coding Agent" })
         for control in controls {
             let box = control.convert(control.bounds, to: view)
             XCTAssertGreaterThanOrEqual(box.minX, 22, "\(control.accessibilityLabel() ?? "picker")")
-            XCTAssertLessThanOrEqual(box.maxX, 738, "\(control.accessibilityLabel() ?? "picker")")
+            XCTAssertLessThanOrEqual(box.maxX, 798, "\(control.accessibilityLabel() ?? "picker")")
         }
     }
 

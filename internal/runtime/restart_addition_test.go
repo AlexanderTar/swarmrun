@@ -297,6 +297,50 @@ func TestRetriedBlockedRestartWithSameRequestIDSavesOnce(t *testing.T) {
 	}
 }
 
+func TestReplayedRestartReportsStoredAttachmentsFailed(t *testing.T) {
+	s, tm, _ := newStore(t)
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	orch := stopOrchestrator(t, s, "EPIC-1")
+	tm.startErr = errors.New("tmux refuses to start")
+	// Break saving so the first call records attachments_failed on its operation.
+	if err := os.WriteFile(filepath.Join(s.Home, "attachments"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}}
+	var firstFailed bool
+	_, _, err := s.StartOrchestrator(ctx, OrchestratorInput{ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1",
+		RequestID: "req-replay-flag", Request: "Please read.", Attachments: files, AttachmentsFailed: &firstFailed})
+	var ie *items.Error
+	if !errors.As(err, &ie) || ie.Code != items.CodeConflict {
+		t.Fatalf("first restart err = %v, want a blocked restart", err)
+	}
+	if !firstFailed {
+		t.Fatal("first restart did not report attachments_failed")
+	}
+	// Heal saving: the replayed call saves fine, but the stored operation still failed.
+	if err := os.Remove(filepath.Join(s.Home, "attachments")); err != nil {
+		t.Fatal(err)
+	}
+	var replayFailed bool
+	_, _, err = s.StartOrchestrator(ctx, OrchestratorInput{ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1",
+		RequestID: "req-replay-flag", Request: "Please read.", Attachments: files, AttachmentsFailed: &replayFailed})
+	if !errors.As(err, &ie) || ie.Code != items.CodeConflict {
+		t.Fatalf("replay err = %v, want the blocked operation again", err)
+	}
+	if !replayFailed {
+		t.Fatal("replayed restart did not report the stored attachments_failed")
+	}
+	got, _ := s.AgentByID(ctx, orch.ID)
+	if strings.Count(got.Brief, "Please read.") != 1 {
+		t.Fatalf("stored brief = %q, want the request once", got.Brief)
+	}
+	it, _ := s.Items.Get(ctx, "EPIC-1")
+	if strings.Count(it.Brief, "Please read.") != 1 {
+		t.Fatalf("description = %q, want the request once", it.Brief)
+	}
+}
+
 func TestRestartFilesOnCancelledRootAreRefused(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()

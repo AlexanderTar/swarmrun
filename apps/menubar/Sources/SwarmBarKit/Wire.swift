@@ -868,7 +868,7 @@ public struct StartedOrchestrator: Decodable, Sendable, Equatable {
     public var agent: AgentNode
     public var attachmentsFailed: Bool?
 
-    enum CodingKeys: String, CodingKey { case agent, attachmentsFailed = "attachments_failed" }
+    enum CodingKeys: String, CodingKey { case attachmentsFailed = "attachments_failed" }
 
     public init(agent: AgentNode, attachmentsFailed: Bool? = nil) {
         self.agent = agent; self.attachmentsFailed = attachmentsFailed

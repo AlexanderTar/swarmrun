@@ -382,6 +382,9 @@ struct RequestImageStrip: View {
                         HStack(spacing: 8) {
                             ForEach(model.images) { image in AttachmentTile(image: image, onRemove: { model.removeImage(image.id) }) }
                         }
+                        // Clearance for the tiles' remove badges, which overhang
+                        // the top and trailing edges and the scroll view clips.
+                        .padding([.top, .trailing], 10)
                         .background(SubtleScrollerConfig())
                     }
                     .scrollIndicators(.never)

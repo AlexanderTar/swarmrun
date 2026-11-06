@@ -904,6 +904,10 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 		if addition != "" {
 			s.appendTaskDescription(ctx, a.ItemID, addition)
 		}
+	} else if op.AttachmentsFailed && in.AttachmentsFailed != nil {
+		// A replayed request key re-reads the stored operation: report its
+		// flag even when this call's own save succeeded.
+		*in.AttachmentsFailed = true
 	}
 	if err != nil {
 		return Agent{}, false, err

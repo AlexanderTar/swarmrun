@@ -682,7 +682,9 @@ public final class AppModel {
         guard !form.selectAgent(name) else { return }
         await form.load()
         form.update(agents: state.agents)
-        form.selectAgent(name)
+        if !form.selectAgent(name), form.hasEntries {
+            form.selectedKey = nil
+        }
     }
 
     /// Bumped by requestNewOrchestrator(); the New orchestrator window host rebuilds a fresh form on each change.

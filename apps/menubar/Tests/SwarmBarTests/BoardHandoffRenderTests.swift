@@ -270,14 +270,28 @@ final class BoardHandoffRenderTests: XCTestCase {
         return form
     }
 
-    private func contentHost(_ form: BoardHandoffForm, height: CGFloat, maxFormHeight: CGFloat? = nil) -> NSHostingView<BoardHandoffView> {
-        let view = maxFormHeight.map { BoardHandoffView(form: form, onDone: {}, onCancel: {}, maxFormHeight: $0) }
-            ?? BoardHandoffView(form: form, onDone: {}, onCancel: {})
+    private func contentHost(_ form: BoardHandoffForm, height: CGFloat, maxFormHeight: CGFloat? = nil,
+                           onDone: @escaping () -> Void = {}) -> NSHostingView<BoardHandoffView> {
+        let view = maxFormHeight.map { BoardHandoffView(form: form, onDone: onDone, onCancel: {}, maxFormHeight: $0) }
+            ?? BoardHandoffView(form: form, onDone: onDone, onCancel: {})
         let host = NSHostingView(rootView: view)
         host.frame = NSRect(x: 0, y: 0, width: 820, height: height)
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.15))
         return host
+    }
+
+    /// A real window around the view, like the Orchestrate task window scene:
+    /// titled with a resizable-capable mask, content-driven sizing.
+    private func openWindow(_ view: BoardHandoffView) -> NSWindow {
+        let controller = NSHostingController(rootView: view)
+        controller.sizingOptions = [.minSize, .intrinsicContentSize, .maxSize]
+        let window = NSWindow(contentViewController: controller)
+        window.styleMask = [.titled, .closable, .resizable]
+        window.title = Copy.orchestrateBoardItem
+        window.orderFront(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        return window
     }
 
     private func subviews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(subviews) }
@@ -311,18 +325,45 @@ final class BoardHandoffRenderTests: XCTestCase {
 
     func testWindowHeightStaysFixedWithEmptyStrip() async throws {
         let form = try await handoffForm(selectedKey: "BUG-7")
-        // Far more room than the content wants (with no height limit to hide
-        // behind) still leaves the editor at its fixed height, and far less
-        // room does not compress it: the window's minimum and maximum heights
-        // are both the content height.
-        let tall = contentHost(form, height: 5000, maxFormHeight: 5000)
-        let tallEditor = try XCTUnwrap(editorScrolls(tall).first, "request editor present when tall")
-        XCTAssertEqual(tallEditor.frame.height, BoardHandoffView.requestFieldHeight - 12, accuracy: 1,
-                       "editor stays fixed when tall")
-        let short = contentHost(form, height: 120)
-        let shortEditor = try XCTUnwrap(editorScrolls(short).first, "request editor present when short")
-        XCTAssertEqual(shortEditor.frame.height, BoardHandoffView.requestFieldHeight - 12, accuracy: 1,
-                       "editor stays fixed when short")
+        let window = openWindow(BoardHandoffView(form: form, onDone: {}, onCancel: {}))
+        defer { window.close() }
+        // The window's minimum and maximum heights are both the content
+        // height: it cannot be resized by hand and opens at that height.
+        XCTAssertEqual(window.contentMinSize.height, window.contentMaxSize.height, accuracy: 1,
+                       "min \(window.contentMinSize.height) vs max \(window.contentMaxSize.height)")
+        XCTAssertEqual(window.contentView?.frame.height ?? 0, window.contentMaxSize.height, accuracy: 2,
+                       "the window opens at the content height")
+        XCTAssertGreaterThan(window.contentMaxSize.height, 400,
+                             "the full form is visible, not the 200pt loading placeholder")
+        XCTAssertEqual(window.contentMinSize.width, window.contentMaxSize.width, accuracy: 1,
+                       "min \(window.contentMinSize.width) vs max \(window.contentMaxSize.width)")
+        XCTAssertEqual(window.contentMaxSize.width, 820, accuracy: 2, "the window opens 820pt wide")
+    }
+
+    func testWindowHeightGrowsWithFileAndError() async throws {
+        let plain = try await handoffForm(selectedKey: "BUG-7")
+        let plainWindow = openWindow(BoardHandoffView(form: plain, onDone: {}, onCancel: {}))
+        defer { plainWindow.close() }
+        let filed = try await handoffForm(selectedKey: "BUG-7")
+        filed.attachments.addImage(data: Data("%PDF-1.4 x".utf8), name: "notes.pdf")
+        let filedWindow = openWindow(BoardHandoffView(form: filed, onDone: {}, onCancel: {}))
+        defer { filedWindow.close() }
+        XCTAssertGreaterThan(filedWindow.contentMaxSize.height, plainWindow.contentMaxSize.height,
+                             "a file row adds height")
+        XCTAssertEqual(filedWindow.contentMinSize.height, filedWindow.contentMaxSize.height, accuracy: 1,
+                       "height stays fixed with a file")
+    }
+
+    func testWindowHeightStopsAtMaxFormHeight() async throws {
+        let form = try await handoffForm(selectedKey: "BUG-7")
+        let uncapped = openWindow(BoardHandoffView(form: form, onDone: {}, onCancel: {}))
+        defer { uncapped.close() }
+        let capped = openWindow(BoardHandoffView(form: form, onDone: {}, onCancel: {}, maxFormHeight: 200))
+        defer { capped.close() }
+        XCTAssertLessThan(capped.contentMaxSize.height, uncapped.contentMaxSize.height,
+                          "the window stops at the height limit")
+        XCTAssertEqual(capped.contentMinSize.height, capped.contentMaxSize.height, accuracy: 1,
+                       "the capped window stays fixed too")
     }
 
     func testLowMaxFormHeightCapsWindowAndScrolls() async throws {
@@ -396,6 +437,36 @@ final class BoardHandoffRenderTests: XCTestCase {
         XCTAssertTrue(flaggedText.contains("Started, but the attachments could not be saved"), flaggedText)
         XCTAssertFalse(flaggedText.contains("agent slot becomes"),
                        "the Done footer replaces the caption footer")
+    }
+
+    func testDoneButtonIsEnabledAndFiresAfterUpdateAndWhenDisconnected() async throws {
+        let client = try MockDaemonClient(fixtures: Fixture.dir)
+        let model = makeAppModel(client)
+        await model.refresh()
+        let form = model.makeBoardHandoffForm()
+        await form.load()
+        form.selectedKey = "EPIC-12"
+        form.request = "read this"
+        form.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        client.handoffResult = .success(HandoffResult(attachmentsFailed: true))
+        _ = await form.primary()
+        form.update(agents: model.state.agents.filter { $0.name != "billing-spike-orchestrator" })
+        form.connected = false
+        XCTAssertFalse(form.canSubmit, "the primary path is dead while disconnected")
+        // Offscreen SwiftUI buttons expose no NSButton to press, so drive the
+        // real window's default action with Return: only an enabled Done handles it.
+        var done = false
+        let window = openWindow(BoardHandoffView(form: form, onDone: { done = true }, onCancel: {}))
+        defer { window.close() }
+        window.makeKeyAndOrderFront(nil)
+        try await taskSleep(.milliseconds(300))
+        let enter = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+                                                   timestamp: ProcessInfo.processInfo.systemUptime,
+                                                   windowNumber: window.windowNumber, context: nil,
+                                                   characters: "\r", charactersIgnoringModifiers: "\r",
+                                                   isARepeat: false, keyCode: 36))
+        XCTAssertTrue(window.performKeyEquivalent(with: enter), "Return reaches the default Done button")
+        XCTAssertTrue(done, "Done fires onDone")
     }
 }
 

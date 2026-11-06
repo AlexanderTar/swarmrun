@@ -262,6 +262,38 @@ final class BoardHandoffTests: XCTestCase {
         XCTAssertNotEqual(f.selectedKey, "EPIC-12", "EPIC-12 is in progress without a live orchestrator → gone")
     }
 
+    func testLoadWithMissingRowKeepsNilWhenEntriesExist() async {
+        let f = await form()
+        f.selectedKey = "BUG-7"
+        f.request = "keep me"
+        client.boardItemList = client.boardItemList.filter { $0.key != "BUG-7" }
+        await f.load()
+        XCTAssertNil(f.selectedKey, "entries must not jump to another item on reload")
+        XCTAssertEqual(f.request, "keep me")
+    }
+
+    func testLoadWithMissingRowJumpsWhenNoEntries() async {
+        let f = await form()
+        f.selectedKey = "BUG-7"
+        client.boardItemList = client.boardItemList.filter { $0.key != "BUG-7" }
+        await f.load()
+        XCTAssertEqual(f.selectedKey, f.rows.first?.id, "no entries: reload jumps as it always has")
+    }
+
+    func testSelectHandoffAgentClearsWhenStillMissing() async {
+        let model = makeAppModel(client)
+        await model.refresh()
+        let form = model.makeBoardHandoffForm()
+        await form.load()
+        form.selectedKey = "BUG-7"
+        form.request = "keep me"
+        // BUG-7 leaves the board, then Hand off to… names an agent that is not there.
+        client.boardItemList = client.boardItemList.filter { $0.key != "BUG-7" }
+        await model.selectHandoffAgent("no-such-orch", on: form)
+        XCTAssertNil(form.selectedKey, "an unknown agent must not park entries on another item")
+        XCTAssertEqual(form.request, "keep me")
+    }
+
     func testSelectingAnotherItemKeepsEntries() async {
         let f = await form(preselect: "auth-epic-orchestrator")
         f.request = "keep me"

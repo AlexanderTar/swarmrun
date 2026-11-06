@@ -70,6 +70,7 @@ public struct BoardHandoffView: View {
                 .background(SubtleScrollerConfig())
             }
             .frame(maxHeight: maxFormHeight)
+            .fixedSize(horizontal: false, vertical: true)
             .scrollIndicators(.automatic)
             // Once files-not-saved is set, the whole form is inert; only Done stays active.
             // Done reads neither canSubmit nor connected, so it still closes the
@@ -91,7 +92,7 @@ public struct BoardHandoffView: View {
             }
             .padding(.horizontal, 22).padding(.vertical, 12)
         }
-        .frame(minWidth: 760, idealWidth: 820)
+        .frame(width: 820)
         .translucentDialogBackground()
         .background(TranslucentWindowAccessor())
         .background(WindowCenterAccessor())
