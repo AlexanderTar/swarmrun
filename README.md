@@ -47,7 +47,9 @@ ollama pull qwen3-embedding:0.6b
 curl -fsSL https://swarmrun.dev/install.sh | sh
 ```
 
-Or build it by hand:
+This works on macOS and Linux. On Linux, install [Homebrew](https://docs.brew.sh/Homebrew-on-Linux) first; see [Linux](#linux).
+
+Or build it by hand on macOS:
 
 ```bash
 git clone https://github.com/AlexanderTar/swarmrun.git
@@ -138,6 +140,14 @@ Requirements:
 - at least one agent CLI, signed in, and commit signing enabled, as on macOS
 
 Install:
+
+```sh
+curl -fsSL https://swarmrun.dev/install.sh | sh
+```
+
+The installer needs a systemd user session, `git`, `make` and [Homebrew on Linux](https://docs.brew.sh/Homebrew-on-Linux). It installs Go, tmux, pnpm, uv, Node and Ollama from Homebrew, pulls the embedding model, builds Swarm and runs `swarm install`. Homebrew goes first on the daemon's `PATH`, so the daemon uses Homebrew's tmux rather than an older distribution one. It does not install a terminal emulator, `notify-send` or the clipboard tools. It starts Ollama only for the model download; `brew services start ollama` keeps it running after a restart.
+
+Or build it by hand:
 
 ```bash
 git clone https://github.com/AlexanderTar/swarmrun.git
