@@ -379,6 +379,18 @@ final class BoardHandoffTests: XCTestCase {
         XCTAssertEqual(form.request, "keep me", "entries survive the reload")
     }
 
+    func testPreselectRebuildsWhenUnsavedNoticeSet() async throws {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        f.request = "read this"
+        f.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        XCTAssertFalse(f.shouldRebuildForPreselect, "entries move instead of rebuilding")
+        client.handoffResult = .success(HandoffResult(attachmentsFailed: true))
+        _ = await f.primary()
+        XCTAssertNotNil(f.unsavedFilesNotice, "Done state is set")
+        XCTAssertTrue(f.shouldRebuildForPreselect,
+                      "with the files-not-saved notice a new preselection rebuilds rather than moving the inert form's selection")
+    }
+
     func testAttachmentsFailedOnStartSetsNoticeWithStartWording() async throws {
         let f = await form()
         f.selectedKey = "BUG-7"

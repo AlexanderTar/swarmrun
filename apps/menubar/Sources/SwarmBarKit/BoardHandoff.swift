@@ -136,6 +136,12 @@ public final class BoardHandoffForm {
         !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.images.isEmpty
     }
 
+    /// Whether a new "Hand off to…" preselection rebuilds the form instead
+    /// of moving the live selection. The files-not-saved Done state leaves
+    /// the form inert, so a new target rebuilds rather than moving its
+    /// selection and silently dropping the request on Done.
+    public var shouldRebuildForPreselect: Bool { unsavedFilesNotice != nil || !hasEntries }
+
     /// "Hand off to…" while the window is open: move the selection to the
     /// agent's item without rebuilding the form, so typed entries survive.
     /// False when the agent's item is not in the form's list.

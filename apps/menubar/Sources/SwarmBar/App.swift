@@ -264,9 +264,10 @@ struct BoardHandoffHost: View {
         .onDisappear { form = nil }
         // "Hand off to…" while the window is already open: with entries on the
         // live form, move its selection instead of rebuilding so they survive;
-        // otherwise rebuild with the new preselection.
+        // otherwise rebuild with the new preselection. The files-not-saved
+        // Done state leaves the form inert, so it always rebuilds.
         .onChange(of: model.boardHandoffPreselect) { _, name in
-            if let name, let live = form, live.hasEntries {
+            if let name, let live = form, !live.shouldRebuildForPreselect {
                 Task { await model.selectHandoffAgent(name, on: live) }
             } else if name != nil {
                 reopen()
