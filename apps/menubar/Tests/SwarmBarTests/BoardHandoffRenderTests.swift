@@ -341,12 +341,15 @@ final class BoardHandoffRenderTests: XCTestCase {
     }
 
     func testWindowHeightGrowsWithFileAndError() async throws {
+        // An explicit limit: the default comes from the real screen, and on CI's
+        // short display it caps the form, so a file row would add no height.
+        let tall: CGFloat = 2000
         let plain = try await handoffForm(selectedKey: "BUG-7")
-        let plainWindow = openWindow(BoardHandoffView(form: plain, onDone: {}, onCancel: {}))
+        let plainWindow = openWindow(BoardHandoffView(form: plain, onDone: {}, onCancel: {}, maxFormHeight: tall))
         defer { plainWindow.close() }
         let filed = try await handoffForm(selectedKey: "BUG-7")
         filed.attachments.addImage(data: Data("%PDF-1.4 x".utf8), name: "notes.pdf")
-        let filedWindow = openWindow(BoardHandoffView(form: filed, onDone: {}, onCancel: {}))
+        let filedWindow = openWindow(BoardHandoffView(form: filed, onDone: {}, onCancel: {}, maxFormHeight: tall))
         defer { filedWindow.close() }
         XCTAssertGreaterThan(filedWindow.contentMaxSize.height, plainWindow.contentMaxSize.height,
                              "a file row adds height")

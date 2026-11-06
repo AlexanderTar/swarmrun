@@ -50,6 +50,14 @@ These passed on a developer Mac and failed on GitHub until their cause was found
 - **Fix:** `std_stubs()` writes `uname` (Darwin), `sw_vers` (a 14.x version) and `xcode-select` stubs, the same way the preflight tests already do. When `site/install.sh` gains a call to a new host-specific command, add its stub in the same place. Never change `site/install.sh` behaviour to satisfy the tests.
 - **Reproduce:** from the repo root (Docker must be running): `docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq git shellcheck >/dev/null && sh scripts/install-test.sh'`. It must report all passed, the same as `sh scripts/install-test.sh` on a Mac.
 
+### Menu bar window-height tests depend on the screen
+
+- **Symptom:** `testWindowHeightGrowsWithFileAndError` passed locally and failed on the macOS runner with `595.0 is not greater than 618.0`, a window with a file measuring shorter than one without.
+- **Cause:** `BoardHandoffView.defaultMaxFormHeight` is the screen's `visibleFrame` height less `windowChromeHeight`. The runner's numbers fit a display about 768pt tall, where that limit caps the form (595 is a 546pt limit plus 49pt of chrome), while a normal Mac display never reaches it.
+- **Rule:** a test that compares window or content heights passes an explicit `maxFormHeight`, never the default. Never read `NSScreen` in a test's expected value.
+- **Reproduce:** run the test with a low `maxFormHeight` on both windows: locally a limit of 514 gives 563 with and without a file.
+- **Trap:** a passing local run proves nothing here, because a tall local display never reaches the limit.
+
 ### Menu bar OCR tests (macOS runner, `NewOrchestratorRenderTests`, `PopoverRenderTests`)
 
 - **Symptom:** `testAgentAndAdvisorSelectorsShareAlignedSixColumnRows` (`Effort label midY 329 vs picker 358`, `minX 232 vs 222`) and `testEmptyChooserExplainsHowToAddRepositories` (OCR does not find "No repositories found"); sometimes another OCR test (`testDefaultsTabShowsLowTokenCheckboxAndCaption`) instead, because it is a coin flip.
