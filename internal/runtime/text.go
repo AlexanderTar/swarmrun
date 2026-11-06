@@ -405,12 +405,6 @@ const ReviewerRecoveryAddition = "Re-read the review target and the recorded ver
 // it; spawnRunAgent then delivers the full lines as an assignment update.
 const contextTruncated = "(context truncated to fit the brief; the full text arrives as an assignment update: call swarm_sync)"
 
-// RenderBrief renders §9.4. Empty sections are left out. Spec B6: for a
-// workflow spawn (in.Workflow set), a brief that overflows the cap first
-// truncates Context to a single swarm_read pointer, then -- if still over
-// cap -- collapses each unit's steps to its title plus the same pointer. A
-// legacy (non-workflow) spawn never cascades: it just refuses, unchanged
-// (Review Focus 1).
 // renderAddition is the extra section a fresh start appends to a task description.
 // Empty when there is no request and no attachments section.
 func renderAddition(request, attachmentsSection string) string {
@@ -433,6 +427,12 @@ func renderAddition(request, attachmentsSection string) string {
 	return b.String()
 }
 
+// RenderBrief renders §9.4. Empty sections are left out. Spec B6: for a
+// workflow spawn (in.Workflow set), a brief that overflows the cap first
+// truncates Context to a single swarm_read pointer, then -- if still over
+// cap -- collapses each unit's steps to its title plus the same pointer. A
+// legacy (non-workflow) spawn never cascades: it just refuses, unchanged
+// (Review Focus 1).
 func RenderBrief(in BriefInput) (string, error) {
 	if out := renderBriefOnce(in, false, false); items.BriefFits(out) {
 		return out, nil

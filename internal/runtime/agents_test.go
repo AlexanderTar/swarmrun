@@ -444,17 +444,34 @@ func TestStartSpikeWithAttachmentsSaveFailureSetsTheOutFlag(t *testing.T) {
 	}
 }
 
-// No test forces Items.Update to fail after a successful Save (the cleanup
-// path added at agents.go's Update-error branch): Update's only failure
-// modes are a stale Revision or a missing item, and Patch.Revision here is
-// always the it.Revision just returned by the preceding Items.Create in the
-// very same synchronous call — nothing else in this test's control runs
-// between the two calls to make them disagree without either racing the DB
-// from a second goroutine (flaky) or adding a test-only seam to StartSpike
-// that doesn't otherwise exist. The cleanup line itself is a one-line
-// os.RemoveAll guarded by an if that's exercised by every other Attachments
-// test path (Save success, Save failure); only the "Update itself errors"
-// branch is unverified.
+// A brief that fits at Create and overflows once the attachments section is
+// appended makes Update fail after Save. Only that request's batch goes;
+// the item folder stays, so an earlier batch would survive.
+func TestStartSpikeBriefUpdateFailureRemovesOnlyTheBatch(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	files := []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}}
+	_, _, _, err := s.StartSpike(ctx, SpikeInput{Name: "Too long", Intent: "debug",
+		Kind: Fake, Model: "fake-1", Request: strings.Repeat("a", items.MaxBrief), Attachments: files})
+	if err == nil {
+		t.Fatal("expected the description update to fail")
+	}
+	var key string
+	if err := s.DB.QueryRowContext(ctx, `SELECT key FROM items WHERE title = ?`, "Too long").Scan(&key); err != nil {
+		t.Fatal(err)
+	}
+	itemDir := attachments.Dir(s.Home, key)
+	if _, err := os.Stat(itemDir); err != nil {
+		t.Fatalf("item folder = %v, want it kept", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(itemDir, "batch-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("batches left behind: %v", matches)
+	}
+}
 
 // A preflight failure still routes through the attachments Save-and-rewrite
 // step first (it runs before Preflight, spec Locked Decision 4/step 3), so

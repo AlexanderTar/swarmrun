@@ -551,6 +551,37 @@ func TestStartOrchestratorOverLengthWithEntriesIs400(t *testing.T) {
 	}
 }
 
+// The description plus the addition still fits 6000 characters, but the
+// rendered kickoff (headers plus that text) does not. That is a 400, the
+// same cap error, and not the plain-render 422.
+func TestStartOrchestratorRenderedBriefOverflowIs400(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	request := "hi"
+	joined := "\n\n## Additional request\n\n" + request
+	original := strings.Repeat("a", items.MaxBrief-len(joined))
+	if _, err := s.DB.ExecContext(bg, `UPDATE items SET brief = ? WHERE key = ?`, original, seed.EpicKey); err != nil {
+		t.Fatal(err)
+	}
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", fmt.Sprintf(
+		`{"request_id":"render-cap","agent":"fake","model":"fake-1","request":%q}`, request))
+	if rec.Code != 400 {
+		t.Fatalf("status = %d: %s, want 400", rec.Code, rec.Body)
+	}
+	var body struct {
+		Error struct{ Code, Message string }
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Error.Code != "bad_request" || body.Error.Message != items.ErrBriefTooLong {
+		t.Fatalf("error = %+v", body.Error)
+	}
+	if orchestratorAgents(t, s, seed.EpicKey) != 0 || batchCount(t, s.RT.Home, seed.EpicKey) != 0 {
+		t.Fatal("a rendered-brief overflow started an orchestrator")
+	}
+	if got := itemBrief(t, s, seed.EpicKey); got != original {
+		t.Fatal("description changed")
+	}
+}
+
 func TestStartOrchestratorOverLengthWithoutEntriesStaysAsToday(t *testing.T) {
 	s, seed := newRuntimeServerWithEpic(t)
 	original := strings.Repeat("b", items.MaxBrief)

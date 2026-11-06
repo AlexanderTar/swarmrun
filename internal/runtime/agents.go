@@ -344,7 +344,8 @@ func (s *Store) StartSpike(ctx context.Context, in SpikeInput) (string, Agent, b
 	// combined brief either way (spec Locked Decision 4/step 3).
 	if len(in.Attachments) > 0 {
 		section := ""
-		if batch, err := attachments.Save(s.Home, it.Key, in.Attachments); err != nil {
+		var batch attachments.Batch
+		if batch, err = attachments.Save(s.Home, it.Key, in.Attachments); err != nil {
 			section = attachments.FailureSection(len(in.Attachments), err)
 			if in.AttachmentsFailed != nil {
 				*in.AttachmentsFailed = true
@@ -354,12 +355,11 @@ func (s *Store) StartSpike(ctx context.Context, in SpikeInput) (string, Agent, b
 		}
 		in.Request = strings.TrimSpace(in.Request + "\n\n" + section)
 		if _, err := s.Items.Update(ctx, it.Key, items.Patch{Brief: &in.Request, Revision: it.Revision}, items.Daemon()); err != nil {
-			// The brief write failed after a successful Save: the files are
-			// now orphaned under a draft item Sweep will never reach (a
-			// failed StartSpike never reopens or closes the item), so clean
-			// up here instead of waiting on a sweep that can't happen.
-			if in.AttachmentsFailed == nil || !*in.AttachmentsFailed {
-				os.RemoveAll(attachments.Dir(s.Home, it.Key))
+			// The brief write failed after a successful Save. Sweep never
+			// reaches a draft StartSpike leaves behind, so drop this request's
+			// batch only; an earlier batch in the item folder stays.
+			if batch.Dir != "" && (in.AttachmentsFailed == nil || !*in.AttachmentsFailed) {
+				os.RemoveAll(batch.Dir)
 			}
 			return "", Agent{}, false, err
 		}
@@ -665,12 +665,10 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 			}
 		}
 		addition = renderAddition(in.Request, section)
-		if addition != "" {
-			if strings.TrimSpace(it.Brief) == "" {
-				objective = addition
-			} else {
-				objective = strings.TrimSpace(it.Brief) + "\n\n" + addition
-			}
+		if strings.TrimSpace(it.Brief) == "" {
+			objective = addition
+		} else {
+			objective = strings.TrimSpace(it.Brief) + "\n\n" + addition
 		}
 	}
 	if addition != "" && !items.BriefFits(objective) {
@@ -725,8 +723,7 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 	var queued bool
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		if addition != "" {
-			brief := objective
-			if _, err := s.Items.UpdateTx(ctx, tx, it.Key, items.Patch{Brief: &brief, Revision: it.Revision}, items.Daemon()); err != nil {
+			if _, err := s.Items.UpdateTx(ctx, tx, it.Key, items.Patch{Brief: &objective, Revision: it.Revision}, items.Daemon()); err != nil {
 				return err
 			}
 		}
