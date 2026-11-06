@@ -239,6 +239,59 @@ func TestBlockedRestartKeepsTextAndFiles(t *testing.T) {
 	}
 }
 
+// A phase update that fails after the operation commits is a walk error.
+// The batch and the task description stay; only an uncommitted transaction
+// removes the batch.
+func TestRestartWalkErrorKeepsFilesAndDescription(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	orch := stopOrchestrator(t, s, "EPIC-1")
+	if _, err := s.DB.ExecContext(ctx, `CREATE TRIGGER fail_phase_update
+		BEFORE UPDATE OF phase ON agent_operations
+		BEGIN SELECT RAISE(ABORT, 'constraint failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+	const request = "Keep this after the walk fails."
+	_, _, err := s.StartOrchestrator(ctx, OrchestratorInput{ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1",
+		Request: request, Attachments: []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}}})
+	if err == nil || !strings.Contains(err.Error(), "constraint failed") {
+		t.Fatalf("err = %v, want the phase update to fail", err)
+	}
+	if batches := restartBatches(s.Home, "EPIC-1"); len(batches) != 1 {
+		t.Fatalf("batches = %v, want the files kept", batches)
+	}
+	got, _ := s.AgentByID(ctx, orch.ID)
+	it, _ := s.Items.Get(ctx, "EPIC-1")
+	if !strings.Contains(got.Brief, request) || !strings.Contains(it.Brief, request) {
+		t.Fatalf("brief = %q\ndescription = %q", got.Brief, it.Brief)
+	}
+}
+
+func TestRestartFilesOnCancelledRootAreRefused(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	stopOrchestrator(t, s, "EPIC-1")
+	before, _ := s.Items.Get(ctx, "EPIC-1")
+	if _, err := s.DB.ExecContext(ctx, `UPDATE items SET status = ? WHERE key = 'EPIC-1'`, items.Cancelled); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := s.StartOrchestrator(ctx, OrchestratorInput{ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1",
+		Request: "do not save", Attachments: []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}}})
+	var ie *items.Error
+	if !errors.As(err, &ie) || ie.Code != items.CodeConflict || ie.Message != "This item's root is closed." {
+		t.Fatalf("err = %v, want a conflict that the root is closed", err)
+	}
+	if batches := restartBatches(s.Home, "EPIC-1"); len(batches) != 0 {
+		t.Fatalf("batches = %v, want none", batches)
+	}
+	it, _ := s.Items.Get(ctx, "EPIC-1")
+	if it.Brief != before.Brief {
+		t.Fatalf("description = %q", it.Brief)
+	}
+}
+
 func TestRestartWithNoEntriesLeavesBriefAndDescriptionUnchanged(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()

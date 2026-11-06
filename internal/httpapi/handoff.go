@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/AlexanderTar/swarmrun/internal/attachments"
 	"github.com/AlexanderTar/swarmrun/internal/runtime"
@@ -98,6 +99,7 @@ func (s *Server) handoffAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var op runtime.Operation
+	body.Request = strings.TrimSpace(body.Request)
 	if body.Request != "" || len(files) > 0 {
 		if a.Role != runtime.RoleOrchestrator {
 			err = apiErr(http.StatusBadRequest, "bad_request", "Only an orchestrator can take a request or files.")

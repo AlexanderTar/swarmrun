@@ -154,6 +154,110 @@ func TestHandoffOverCapIs400WithNothingSaved(t *testing.T) {
 	}
 }
 
+func TestHandoffWalkErrorStillUpdatesDescription(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	orch := liveOrchestrator(t, s)
+	if _, err := s.DB.ExecContext(ctx, `CREATE TRIGGER fail_phase_update
+		BEFORE UPDATE OF phase ON agent_operations
+		BEGIN SELECT RAISE(ABORT, 'constraint failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+	const request = "Keep this after the walk fails."
+	_, err := handoffWith(ctx, s, orch.ID, "walk", "", request, []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}})
+	if err == nil || !strings.Contains(err.Error(), "constraint failed") {
+		t.Fatalf("err = %v, want the phase update to fail", err)
+	}
+	if batches := restartBatches(s.Home, "EPIC-1"); len(batches) != 1 {
+		t.Fatalf("batches = %v, want the files kept", batches)
+	}
+	got, _ := s.AgentByID(ctx, orch.ID)
+	it, _ := s.Items.Get(ctx, "EPIC-1")
+	if !strings.Contains(got.Brief, request) || !strings.Contains(it.Brief, request) {
+		t.Fatalf("brief = %q\ndescription = %q", got.Brief, it.Brief)
+	}
+	again, err := handoffWith(ctx, s, orch.ID, "walk", "", request, []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}})
+	if err != nil {
+		t.Fatalf("replay = %v", err)
+	}
+	if again.RequestKey != "walk" {
+		t.Fatalf("replay = %+v", again)
+	}
+	it, _ = s.Items.Get(ctx, "EPIC-1")
+	if strings.Count(it.Brief, request) != 1 {
+		t.Fatalf("description = %q, want the request once", it.Brief)
+	}
+}
+
+func TestHandoffFilesOnCancelledRootAreRefused(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	orch := liveOrchestrator(t, s)
+	before, _ := s.Items.Get(ctx, "EPIC-1")
+	if _, err := s.DB.ExecContext(ctx, `UPDATE items SET status = ? WHERE key = 'EPIC-1'`, items.Cancelled); err != nil {
+		t.Fatal(err)
+	}
+	_, err := handoffWith(ctx, s, orch.ID, "closed", "", "do not save", []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}})
+	var ie *items.Error
+	if !errors.As(err, &ie) || ie.Code != items.CodeConflict || ie.Message != "This item's root is closed." {
+		t.Fatalf("err = %v, want a conflict that the root is closed", err)
+	}
+	if batches := restartBatches(s.Home, "EPIC-1"); len(batches) != 0 {
+		t.Fatalf("batches = %v, want none", batches)
+	}
+	it, _ := s.Items.Get(ctx, "EPIC-1")
+	got, _ := s.AgentByID(ctx, orch.ID)
+	if it.Brief != before.Brief || strings.Contains(got.Brief, "do not save") {
+		t.Fatalf("description = %q\nbrief = %q", it.Brief, got.Brief)
+	}
+	var n int
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_operations WHERE agent_id = ?`, orch.ID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("operations = %d (%v), want none", n, err)
+	}
+}
+
+func TestSameKeyHandoffWhileParkedReturnsTheOperation(t *testing.T) {
+	s, tm, _ := newStore(t)
+	ctx := context.Background()
+	orch := liveOrchestrator(t, s)
+	ses, err := s.LatestSession(ctx, orch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSessionState(ctx, ses.ID, Running); err != nil {
+		t.Fatal(err)
+	}
+	panes(tm, Pane{Session: ses.TmuxName})
+	tm.env[ses.TmuxName] = map[string]string{"SWARM_SESSION": ses.ID}
+	files := []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}}
+	// The second call misses the replay lookup, then the first call commits
+	// and parks before the in-flight check. That check must return the winner.
+	var winner Operation
+	handoffBeforeInFlight = func() {
+		handoffBeforeInFlight = nil
+		var herr error
+		winner, herr = handoffWith(ctx, s, orch.ID, "same", "", "one addition", files)
+		if herr != nil || isTerminalPhase(winner.Phase) {
+			t.Errorf("winner = %s, %v, want a parked handoff", winner.Phase, herr)
+		}
+	}
+	t.Cleanup(func() { handoffBeforeInFlight = nil })
+	second, err := handoffWith(ctx, s, orch.ID, "same", "", "one addition", files)
+	if err != nil {
+		t.Fatalf("second = %v, want the parked operation", err)
+	}
+	if winner.ID == "" || second.ID != winner.ID {
+		t.Fatalf("operations = %s, %s", winner.ID, second.ID)
+	}
+	if batches := restartBatches(s.Home, "EPIC-1"); len(batches) != 1 {
+		t.Fatalf("batches = %v, want 1", batches)
+	}
+	it, _ := s.Items.Get(ctx, "EPIC-1")
+	if strings.Count(it.Brief, "one addition") != 1 {
+		t.Fatalf("description = %q", it.Brief)
+	}
+}
+
 func TestFullDescriptionHandoffSucceedsAndIsLogged(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()

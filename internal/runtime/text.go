@@ -405,7 +405,7 @@ const ReviewerRecoveryAddition = "Re-read the review target and the recorded ver
 // it; spawnRunAgent then delivers the full lines as an assignment update.
 const contextTruncated = "(context truncated to fit the brief; the full text arrives as an assignment update: call swarm_sync)"
 
-// renderAddition is the extra section a fresh start appends to a task description.
+// renderAddition is the extra section a fresh start, restart or handoff appends to a task description.
 // Empty when there is no request and no attachments section.
 func renderAddition(request, attachmentsSection string) string {
 	request = strings.TrimSpace(request)

@@ -94,9 +94,8 @@ func (s *Store) RequestReplacement(ctx context.Context, agentID string, mode Rep
 }
 
 const (
-	errSwitchNotOrchestrator   = "Only an orchestrator can switch agents on handoff."
-	errSwitchNotLive           = "This orchestrator is no longer running. Reopen the list."
-	errAdditionNotOrchestrator = "Only an orchestrator can take a request or files."
+	errSwitchNotOrchestrator = "Only an orchestrator can switch agents on handoff."
+	errSwitchNotLive         = "This orchestrator is no longer running. Reopen the list."
 )
 
 // RequestHandoffTo records a handoff whose successor runs as sw. A replayed
@@ -142,18 +141,16 @@ type HandoffAddition struct {
 	Files                              []attachments.File
 }
 
+// handoffBeforeInFlight runs after a miss on the replay lookup and before the
+// in-flight refusal. Nil outside the parked same-key test.
+var handoffBeforeInFlight func()
+
 // RequestHandoffWithAddition records a handoff and keeps the request and
-// files on the stored brief, the task description and one note. A request
-// with no request text and no files takes today's handoff path unchanged.
-// A replay of a request that has entries returns the stored operation and
+// files on the stored brief, the task description and one note. The handler
+// calls it only when a request or files are present; an empty request takes
+// today's handoff path there. A replay returns the stored operation and
 // writes nothing, including after the root is accepted.
 func (s *Store) RequestHandoffWithAddition(ctx context.Context, in HandoffAddition) (Operation, error) {
-	if strings.TrimSpace(in.Request) == "" && len(in.Files) == 0 {
-		if in.Switch != nil {
-			return s.RequestHandoffTo(ctx, in.AgentID, in.RequestKey, *in.Switch)
-		}
-		return s.RequestReplacement(ctx, in.AgentID, ModeHandoff, in.RequestKey, in.Note)
-	}
 	if in.RequestKey != "" {
 		op, err := s.operationByKey(ctx, in.AgentID, in.RequestKey)
 		if err == nil {
@@ -167,24 +164,32 @@ func (s *Store) RequestHandoffWithAddition(ctx context.Context, in HandoffAdditi
 	if err != nil {
 		return Operation{}, err
 	}
-	if a.Role != RoleOrchestrator {
-		return Operation{}, &items.Error{Code: items.CodeBadRequest, Message: errAdditionNotOrchestrator}
-	}
 	if in.Switch != nil && a.State != AgentQueued && a.State != AgentActive {
 		return Operation{}, &items.Error{Code: items.CodeConflict, Message: errSwitchNotLive}
 	}
-	done, err := s.rootIsDone(ctx, s.DB, a.RootItemID)
-	if err != nil {
+	var rootStatus string
+	if err := s.DB.QueryRowContext(ctx, `SELECT status FROM items WHERE id = ?`, a.RootItemID).Scan(&rootStatus); err != nil {
 		return Operation{}, err
 	}
-	if done {
+	if rootStatus == string(items.Done) {
 		return Operation{}, &items.Error{Code: items.CodeConflict, Message: errRootAcceptedHandoff}
+	}
+	if rootStatus == string(items.Cancelled) && len(in.Files) > 0 {
+		return Operation{}, &items.Error{Code: items.CodeConflict, Message: "This item's root is closed."}
 	}
 	if _, err := s.LatestSession(ctx, in.AgentID); err != nil {
 		return Operation{}, &items.Error{Code: items.CodeBadRequest,
 			Message: "This agent has no session to replace yet."}
 	}
+	if handoffBeforeInFlight != nil {
+		handoffBeforeInFlight()
+	}
 	if err := s.refuseIfOperationInFlight(ctx, in.AgentID); err != nil {
+		if in.RequestKey != "" {
+			if op, rerr := s.operationByKey(ctx, in.AgentID, in.RequestKey); rerr == nil {
+				return op, nil
+			}
+		}
 		return Operation{}, err
 	}
 	switchJSON := ""
@@ -232,15 +237,12 @@ func (s *Store) RequestHandoffWithAddition(ctx context.Context, in HandoffAdditi
 	})
 	if inserted {
 		committed = true
+		if addition != "" {
+			s.appendTaskDescription(ctx, a.ItemID, addition)
+		}
 	}
 	if err != nil {
 		return Operation{}, err
-	}
-	if !inserted {
-		return op, nil
-	}
-	if addition != "" {
-		s.appendTaskDescription(ctx, a.ItemID, addition)
 	}
 	return op, nil
 }

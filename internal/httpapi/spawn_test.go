@@ -662,6 +662,43 @@ func TestStartOrchestratorSaveFailureReturnsAttachmentsFailedAndReplaysIt(t *tes
 	}
 }
 
+func TestRestartSaveFailureReturnsAttachmentsFailedAndReplaysIt(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	started := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator",
+		`{"request_id":"first","agent":"fake","model":"fake-1"}`)
+	if started.Code != 200 {
+		t.Fatalf("start = %d: %s", started.Code, started.Body)
+	}
+	var agent struct{ Name string }
+	json.Unmarshal(started.Body.Bytes(), &agent)
+	if _, err := s.DB.ExecContext(bg, `UPDATE sessions SET state = 'crashed'
+		WHERE id = (SELECT id FROM sessions WHERE agent_id = (SELECT id FROM agents WHERE name = ?)
+		ORDER BY generation DESC, attempt DESC LIMIT 1)`, agent.Name); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.RT.Home, "attachments"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"request_id":"restart-save-fail","agent":"fake","model":"fake-1","request":"Please read the notes.",
+		"attachments":[{"name":"a.png","data":%q}]}`, onePNGBase64)
+	first := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", body)
+	if first.Code != 200 {
+		t.Fatalf("restart = %d: %s", first.Code, first.Body)
+	}
+	var out struct {
+		Name              string `json:"name"`
+		AttachmentsFailed bool   `json:"attachments_failed"`
+	}
+	json.Unmarshal(first.Body.Bytes(), &out)
+	if out.Name != agent.Name || !out.AttachmentsFailed {
+		t.Fatalf("response = %s, want the same orchestrator and attachments_failed", first.Body)
+	}
+	second := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", body)
+	if second.Body.String() != first.Body.String() {
+		t.Fatalf("replay = %s, want %s", second.Body, first.Body)
+	}
+}
+
 func TestStartOrchestratorAndTheSecondOneIs409(t *testing.T) {
 	s, seed := newRuntimeServerWithEpic(t)
 	// A real, signed repo (not seed.RepoID's fake `.git` directory): required

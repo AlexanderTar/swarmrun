@@ -358,7 +358,7 @@ func (s *Store) StartSpike(ctx context.Context, in SpikeInput) (string, Agent, b
 			// The brief write failed after a successful Save. Sweep never
 			// reaches a draft StartSpike leaves behind, so drop this request's
 			// batch only; an earlier batch in the item folder stays.
-			if batch.Dir != "" && (in.AttachmentsFailed == nil || !*in.AttachmentsFailed) {
+			if batch.Dir != "" {
 				os.RemoveAll(batch.Dir)
 			}
 			return "", Agent{}, false, err
@@ -893,18 +893,20 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 		}
 		addition = renderAddition(in.Request, section)
 	}
-	op, _, err := s.requestReplacement(ctx, a.ID, replacementInput{
+	op, inserted, err := s.requestReplacement(ctx, a.ID, replacementInput{
 		Mode: ModeRecover, SwitchJSON: switchJSON, BriefAddition: addition, AttachmentsFailed: failed,
 	})
+	if inserted {
+		committed = true
+		if failed && in.AttachmentsFailed != nil {
+			*in.AttachmentsFailed = true
+		}
+		if addition != "" {
+			s.appendTaskDescription(ctx, a.ItemID, addition)
+		}
+	}
 	if err != nil {
 		return Agent{}, false, err
-	}
-	committed = true
-	if failed && in.AttachmentsFailed != nil {
-		*in.AttachmentsFailed = true
-	}
-	if addition != "" {
-		s.appendTaskDescription(ctx, a.ItemID, addition)
 	}
 	if op.Phase == PhaseBlocked {
 		return Agent{}, false, &items.Error{Code: items.CodeConflict,
