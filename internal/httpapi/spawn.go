@@ -107,6 +107,10 @@ func (s *Server) startOrchestrator(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
+	if len(body.Attachments) > 0 && body.RequestID == "" {
+		s.writeErr(w, apiErr(http.StatusBadRequest, "bad_request", "Attachments need a request_id."))
+		return
+	}
 	var files []attachments.File
 	if len(body.Attachments) > 0 {
 		in := make([]attachments.Input, len(body.Attachments))
@@ -137,9 +141,10 @@ func (s *Server) startOrchestrator(w http.ResponseWriter, r *http.Request) {
 			}
 			repoPaths = paths
 		}
+		var failed bool
 		a, _, err := s.RT.StartOrchestrator(ctx, runtime.OrchestratorInput{ItemKey: key, Kind: runtime.AgentKind(body.Agent),
 			Model: body.Model, Effort: body.Effort, Advisor: advisorChoiceFromBody(body.Advisor), Roles: rolesFromBody(body.Roles), Name: body.Name,
-			RepoPaths: repoPaths, Request: body.Request, Attachments: files})
+			RepoPaths: repoPaths, Request: body.Request, Attachments: files, AttachmentsFailed: &failed})
 		if err != nil {
 			return nil, wrapPreflightErr(err)
 		}
@@ -148,7 +153,11 @@ func (s *Server) startOrchestrator(w http.ResponseWriter, r *http.Request) {
 				return nil, err
 			}
 		}
-		return s.agentNodeOut(ctx, a, s.livePanes(ctx))
+		node, err := s.agentNodeOut(ctx, a, s.livePanes(ctx))
+		if err != nil {
+			return nil, err
+		}
+		return startedOrchestratorWire{agentNodeWire: node, AttachmentsFailed: failed}, nil
 	})
 }
 

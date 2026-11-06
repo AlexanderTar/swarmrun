@@ -260,6 +260,12 @@ type notificationsWire struct {
 	Items  []notificationWire `json:"items"`
 }
 
+// startedOrchestratorWire is the agent node, flat, plus the save-failure flag.
+type startedOrchestratorWire struct {
+	agentNodeWire
+	AttachmentsFailed bool `json:"attachments_failed,omitempty"`
+}
+
 // spikeResponseWire is contracts §4 POST /api/spikes.
 type spikeResponseWire struct {
 	Item              itemWire      `json:"item"`

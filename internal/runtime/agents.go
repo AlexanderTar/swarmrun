@@ -560,9 +560,29 @@ func (s *Store) promoteDraftRoot(ctx context.Context, it items.Item) (items.Item
 }
 
 func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Agent, bool, error) {
+	var batch attachments.Batch
+	committed := false
+	defer func() {
+		if !committed && batch.Dir != "" {
+			os.RemoveAll(batch.Dir)
+		}
+	}()
+
 	it, err := s.Items.Get(ctx, in.ItemKey)
 	if err != nil {
 		return Agent{}, false, err
+	}
+	if len(in.Attachments) > 0 {
+		root := it
+		if it.ID != it.RootID {
+			root, err = s.Items.Get(ctx, it.RootKey)
+			if err != nil {
+				return Agent{}, false, err
+			}
+		}
+		if root.Status == items.Done || root.Status == items.Cancelled {
+			return Agent{}, false, &items.Error{Code: items.CodeConflict, Message: "This item's root is closed."}
+		}
 	}
 	if it, err = s.promoteDraftRoot(ctx, it); err != nil {
 		return Agent{}, false, err
@@ -633,11 +653,16 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 	if strings.TrimSpace(in.Request) != "" || len(in.Attachments) > 0 {
 		section := ""
 		if len(in.Attachments) > 0 {
-			batch, err := attachments.Save(s.Home, it.Key, in.Attachments)
+			saved, err := attachments.Save(s.Home, it.Key, in.Attachments)
 			if err != nil {
-				return Agent{}, false, err
+				if in.AttachmentsFailed != nil {
+					*in.AttachmentsFailed = true
+				}
+				section = attachments.FailureSection(len(in.Attachments), err)
+			} else {
+				batch = saved
+				section = attachments.BriefSection(batch.Files)
 			}
-			section = attachments.BriefSection(batch.Files)
 		}
 		addition = renderAddition(in.Request, section)
 		if addition != "" {
@@ -647,6 +672,9 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 				objective = strings.TrimSpace(it.Brief) + "\n\n" + addition
 			}
 		}
+	}
+	if addition != "" && !items.BriefFits(objective) {
+		return Agent{}, false, &items.Error{Code: items.CodeBadRequest, Message: items.ErrBriefTooLong}
 	}
 
 	briefText, err := RenderBrief(BriefInput{
@@ -658,6 +686,9 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 		Objective: objective,
 	})
 	if err != nil {
+		if addition != "" {
+			return Agent{}, false, &items.Error{Code: items.CodeBadRequest, Message: items.ErrBriefTooLong}
+		}
 		return Agent{}, false, err
 	}
 
@@ -735,6 +766,7 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 	if err != nil {
 		return Agent{}, false, err
 	}
+	committed = true
 	if substituted && s.Notify != nil {
 		_ = s.Notify.Raise(ctx, nil, NotifyInput{Kind: "agent.fallback_used", AgentName: a.Name, ItemKey: it.Key,
 			Args: map[string]string{"name": a.Name, "agent": a.Kind.Display(), "from": origKind.Display()}})

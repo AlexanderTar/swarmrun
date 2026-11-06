@@ -579,6 +579,99 @@ func TestTaskKeepsAnEarlierAdditionAndListsBoth(t *testing.T) {
 	}
 }
 
+func TestStartOrchestratorNameAndPreflightRefusalsLeaveNoBatch(t *testing.T) {
+	s, _, f := newStore(t)
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	files := []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}}
+	if _, _, err := s.StartOrchestrator(ctx, OrchestratorInput{ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1", Name: "Taken"}); err != nil {
+		t.Fatal(err)
+	}
+	ep, err := s.Items.Create(ctx, items.CreateInput{Type: items.Epic, Title: "Fresh"}, items.User("board"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.ExecContext(ctx, `UPDATE items SET status = 'ready' WHERE id = ?`, ep.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.Items.Get(ctx, ep.Key)
+	_, _, err = s.StartOrchestrator(ctx, OrchestratorInput{
+		ItemKey: ep.Key, Kind: Fake, Model: "fake-1", Name: "Taken",
+		Request: "nope", Attachments: files,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already in use") {
+		t.Fatalf("name err = %v", err)
+	}
+	f.NotInstalled = true
+	_, _, err = s.StartOrchestrator(ctx, OrchestratorInput{
+		ItemKey: ep.Key, Kind: Fake, Model: "fake-1", Name: "Other",
+		Request: "nope", Attachments: files,
+	})
+	if err == nil || !strings.Contains(err.Error(), "isn't installed") {
+		t.Fatalf("preflight err = %v", err)
+	}
+	got, _ := s.Items.Get(ctx, ep.Key)
+	if got.Brief != before.Brief {
+		t.Fatalf("description = %q", got.Brief)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(s.Home, "attachments", ep.Key, "batch-*")); len(matches) != 0 {
+		t.Fatalf("batches = %v", matches)
+	}
+}
+
+func TestDraftPromotionStaysWhenAStartWithFilesIsRefused(t *testing.T) {
+	s, _, f := newStore(t)
+	f.NotInstalled = true
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	if _, err := s.DB.ExecContext(ctx, `UPDATE items SET status = 'draft' WHERE key = 'EPIC-1'`); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.Items.Get(ctx, "EPIC-1")
+	files := []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}}
+	_, _, err := s.StartOrchestrator(ctx, OrchestratorInput{
+		ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1", Request: "later", Attachments: files,
+	})
+	if err == nil || !strings.Contains(err.Error(), "isn't installed") {
+		t.Fatalf("err = %v", err)
+	}
+	got, _ := s.Items.Get(ctx, "EPIC-1")
+	if got.Status != items.Ready {
+		t.Fatalf("status = %s, want ready", got.Status)
+	}
+	if got.Brief != before.Brief {
+		t.Fatalf("description = %q", got.Brief)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(s.Home, "attachments", "EPIC-1", "batch-*")); len(matches) != 0 {
+		t.Fatalf("batches = %v", matches)
+	}
+}
+
+func TestSessionFailureAfterCommitKeepsTheFiles(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	if err := os.WriteFile(filepath.Join(s.Home, "work"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	files := []attachments.File{{Name: "notes.md", Ext: ".md", Body: []byte("kept")}}
+	_, _, err := s.StartOrchestrator(ctx, OrchestratorInput{
+		ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1", Request: "keep the file", Attachments: files,
+	})
+	if err == nil {
+		t.Fatal("session start should fail")
+	}
+	path := attachmentPath(t, s.Home, "EPIC-1", "01-notes.md")
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != "kept" {
+		t.Fatalf("file = %q, %v", body, err)
+	}
+	it, err := s.Items.Get(ctx, "EPIC-1")
+	if err != nil || !strings.Contains(it.Brief, "keep the file") {
+		t.Fatalf("description = %q, err = %v", it.Brief, err)
+	}
+}
+
 // Chore spec decision 1 / E3.
 func TestStartOrchestratorPromotesDraftRoot(t *testing.T) {
 	s, _, _ := newStore(t)

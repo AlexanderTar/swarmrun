@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AlexanderTar/swarmrun/internal/items"
 	"github.com/AlexanderTar/swarmrun/internal/runtime"
 )
 
@@ -421,6 +422,212 @@ func TestStartOrchestratorWithNoEntriesLeavesTheDescriptionAndResponseAsToday(t 
 	}
 	if strings.Contains(payload, "## Additional request") {
 		t.Fatalf("sync gained an addition: %s", payload)
+	}
+}
+
+func batchCount(t *testing.T, home, key string) int {
+	t.Helper()
+	dir := filepath.Join(home, "attachments", key)
+	fi, err := os.Stat(dir)
+	if err != nil || !fi.IsDir() {
+		return 0
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "batch-") {
+			n++
+		}
+	}
+	return n
+}
+
+func orchestratorAgents(t *testing.T, s *runtimeEnv, key string) int {
+	t.Helper()
+	var n int
+	if err := s.DB.QueryRowContext(bg, `SELECT COUNT(*) FROM agents WHERE item_id = (SELECT id FROM items WHERE key = ?)`, key).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestStartOrchestratorFilesWithoutRequestIDAre400(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	before := itemBrief(t, s, seed.EpicKey)
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", fmt.Sprintf(
+		`{"agent":"fake","model":"fake-1","attachments":[{"name":"a.png","data":%q}]}`, onePNGBase64))
+	if rec.Code != 400 {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var body struct {
+		Error struct{ Code, Message string }
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Error.Code != "bad_request" || body.Error.Message != "Attachments need a request_id." {
+		t.Fatalf("error = %+v", body.Error)
+	}
+	if orchestratorAgents(t, s, seed.EpicKey) != 0 || batchCount(t, s.RT.Home, seed.EpicKey) != 0 {
+		t.Fatal("a missing request_id saved files or started an orchestrator")
+	}
+	if got := itemBrief(t, s, seed.EpicKey); got != before {
+		t.Fatalf("description = %q", got)
+	}
+}
+
+func TestStartOrchestratorBadFileIs400AndChangesNothing(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	before := itemBrief(t, s, seed.EpicKey)
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator",
+		`{"request_id":"bad","agent":"fake","model":"fake-1","attachments":[{"name":"x.pdf","data":"%%%"}]}`)
+	if rec.Code != 400 {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if orchestratorAgents(t, s, seed.EpicKey) != 0 || batchCount(t, s.RT.Home, seed.EpicKey) != 0 {
+		t.Fatal("a bad file changed something")
+	}
+	if got := itemBrief(t, s, seed.EpicKey); got != before {
+		t.Fatalf("description = %q", got)
+	}
+}
+
+func TestStartOrchestratorReplaySavesOnce(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	body := fmt.Sprintf(`{"request_id":"rep","agent":"fake","model":"fake-1","request":"once",
+		"attachments":[{"name":"a.png","data":%q}]}`, onePNGBase64)
+	first := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", body)
+	second := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", body)
+	if first.Code != 200 || first.Body.String() != second.Body.String() {
+		t.Fatalf("first %d %s\nsecond %d %s", first.Code, first.Body, second.Code, second.Body)
+	}
+	if n := batchCount(t, s.RT.Home, seed.EpicKey); n != 1 {
+		t.Fatalf("batch folders = %d, want 1", n)
+	}
+}
+
+func TestStartOrchestratorConflictLeavesNoBatchAndAnUnchangedDescription(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	plain := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator",
+		`{"request_id":"first","agent":"fake","model":"fake-1"}`)
+	if plain.Code != 200 {
+		t.Fatalf("first start = %d: %s", plain.Code, plain.Body)
+	}
+	before := itemBrief(t, s, seed.EpicKey)
+	conflict := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", fmt.Sprintf(
+		`{"request_id":"second","agent":"fake","model":"fake-1","request":"again","attachments":[{"name":"a.png","data":%q}]}`, onePNGBase64))
+	if conflict.Code != 409 {
+		t.Fatalf("conflict = %d: %s", conflict.Code, conflict.Body)
+	}
+	if batchCount(t, s.RT.Home, seed.EpicKey) != 0 || itemBrief(t, s, seed.EpicKey) != before {
+		t.Fatalf("conflict left files or changed the description %q", itemBrief(t, s, seed.EpicKey))
+	}
+}
+
+func TestStartOrchestratorOverLengthWithEntriesIs400(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	original := strings.Repeat("a", items.MaxBrief-20)
+	if _, err := s.DB.ExecContext(bg, `UPDATE items SET brief = ? WHERE key = ?`, original, seed.EpicKey); err != nil {
+		t.Fatal(err)
+	}
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", fmt.Sprintf(
+		`{"request_id":"long","agent":"fake","model":"fake-1","request":"this pushes the description over the limit","attachments":[{"name":"a.png","data":%q}]}`, onePNGBase64))
+	if rec.Code != 400 {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	var body struct {
+		Error struct{ Code, Message string }
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Error.Code != "bad_request" || body.Error.Message != items.ErrBriefTooLong {
+		t.Fatalf("error = %+v", body.Error)
+	}
+	if orchestratorAgents(t, s, seed.EpicKey) != 0 || batchCount(t, s.RT.Home, seed.EpicKey) != 0 {
+		t.Fatal("an over-long start saved files or started an orchestrator")
+	}
+	if got := itemBrief(t, s, seed.EpicKey); got != original {
+		t.Fatalf("description changed")
+	}
+}
+
+func TestStartOrchestratorOverLengthWithoutEntriesStaysAsToday(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	original := strings.Repeat("b", items.MaxBrief)
+	if _, err := s.DB.ExecContext(bg, `UPDATE items SET brief = ? WHERE key = ?`, original, seed.EpicKey); err != nil {
+		t.Fatal(err)
+	}
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator",
+		`{"request_id":"long-plain","agent":"fake","model":"fake-1"}`)
+	if rec.Code != 422 {
+		t.Fatalf("status = %d: %s, want today's 422", rec.Code, rec.Body)
+	}
+	var body struct {
+		Error struct{ Code, Message string }
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Error.Code != "preflight_failed" || body.Error.Message != items.ErrBriefTooLong {
+		t.Fatalf("error = %+v", body.Error)
+	}
+	if batchCount(t, s.RT.Home, seed.EpicKey) != 0 || itemBrief(t, s, seed.EpicKey) != original {
+		t.Fatal("a plain over-long start changed the item")
+	}
+}
+
+func TestStartOrchestratorOnAClosedRootWithFilesIs409(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	before := itemBrief(t, s, seed.EpicKey)
+	if _, err := s.DB.ExecContext(bg, `UPDATE items SET status = 'done' WHERE key = ?`, seed.EpicKey); err != nil {
+		t.Fatal(err)
+	}
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", fmt.Sprintf(
+		`{"request_id":"closed","agent":"fake","model":"fake-1","attachments":[{"name":"a.png","data":%q}]}`, onePNGBase64))
+	if rec.Code != 409 {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if orchestratorAgents(t, s, seed.EpicKey) != 0 || batchCount(t, s.RT.Home, seed.EpicKey) != 0 || itemBrief(t, s, seed.EpicKey) != before {
+		t.Fatal("files on a closed root changed the item")
+	}
+	plain := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator",
+		`{"request_id":"closed-plain","agent":"fake","model":"fake-1"}`)
+	if plain.Code != 200 {
+		t.Fatalf("start without files = %d: %s, want today's success", plain.Code, plain.Body)
+	}
+}
+
+func TestStartOrchestratorSaveFailureReturnsAttachmentsFailedAndReplaysIt(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	if err := os.WriteFile(filepath.Join(s.RT.Home, "attachments"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"request_id":"save-fail","agent":"fake","model":"fake-1","request":"Please read the notes.",
+		"attachments":[{"name":"a.png","data":%q}]}`, onePNGBase64)
+	first := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", body)
+	if first.Code != 200 {
+		t.Fatalf("status = %d: %s", first.Code, first.Body)
+	}
+	var started struct {
+		Name              string `json:"name"`
+		AttachmentsFailed bool   `json:"attachments_failed"`
+	}
+	json.Unmarshal(first.Body.Bytes(), &started)
+	if started.Name == "" || !started.AttachmentsFailed {
+		t.Fatalf("response = %s", first.Body)
+	}
+	brief := itemBrief(t, s, seed.EpicKey)
+	if !strings.Contains(brief, "Please read the notes.") || !strings.Contains(brief, "could not save them") {
+		t.Fatalf("description = %q", brief)
+	}
+	var payload string
+	if err := s.DB.QueryRowContext(bg, `SELECT payload_json FROM messages WHERE kind = 'assignment' ORDER BY seq DESC LIMIT 1`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload, "Ask the user to share them another way.") {
+		t.Fatalf("sync = %s", payload)
+	}
+	second := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", body)
+	if second.Body.String() != first.Body.String() || batchCount(t, s.RT.Home, seed.EpicKey) != 0 {
+		t.Fatalf("replay = %s, batches = %d", second.Body, batchCount(t, s.RT.Home, seed.EpicKey))
 	}
 }
 
