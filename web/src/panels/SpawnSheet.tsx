@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { TriangleAlert } from "lucide-react";
+import { Loader2, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { errorText } from "../api";
 import { AgentFields, type AgentFieldsValue } from "../components/AgentFields";
@@ -143,6 +143,7 @@ function Form(p: {
               disabled={!valid || !connected || start.pending || attachments.pending > 0}
               onClick={() => void submit()}
             >
+              {start.pending && <Loader2 className="animate-spin" />}
               {failure.banner ? C.tryAgain : submitLabel(busy)}
             </Button>
           )}
@@ -166,9 +167,9 @@ function Form(p: {
       )}
       <div
         className={cn("space-y-4", started && "opacity-50")}
-        inert={started ? true : undefined}
-        aria-disabled={started ? true : undefined}
-        data-started={started ? true : undefined}
+        inert={!!started}
+        aria-disabled={!!started}
+        data-started={!!started}
       >
         <RepoPicker label={C.repositories} selected={repos} onChange={setRepos} />
         <AgentFields
@@ -201,10 +202,11 @@ export function SpawnSheet(p: { itemKey: string; onClose(): void }) {
   const settings = useSettings();
   const catalog = useCatalog();
   const agents = useAgents();
-  // Standing rule: a failed load gets a message + retry, never a stuck sheet that silently renders
-  // nothing (the brief returned `null` here on any of these four queries failing, forever).
+  // A failed first load gets a message + retry. A failed refetch keeps the form: the store
+  // leaves the last data in place, and replacing it would drop the request, files and Done.
   const err = detail.error ?? settings.error ?? catalog.error ?? agents.error;
-  if (err) {
+  const loaded = !!(detail.data && settings.data && catalog.data && agents.data);
+  if (err && !loaded) {
     return (
       <Sheet title={C.startOrchestrator} width={900} onClose={p.onClose}>
         <Alert variant="destructive">

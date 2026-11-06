@@ -261,9 +261,10 @@ export function NewSpikeSheet(p: {
   const settings = useSettings();
   const catalog = useCatalog();
   const agents = useAgents();
-  // Standing rule: a failed load gets a message + retry, never a silently-empty sheet.
+  // A failed first load gets a message + retry. A failed refetch keeps the form.
   const err = settings.error ?? catalog.error ?? agents.error;
-  if (err) {
+  const loaded = !!(settings.data && catalog.data && agents.data);
+  if (err && !loaded) {
     return (
       <Sheet title={C.newOrchestrator} width={900} onClose={p.onClose}>
         <Alert variant="destructive">

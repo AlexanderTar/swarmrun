@@ -254,6 +254,25 @@ describe("SpawnSheet (§16.10)", () => {
     const name = within(sheet).getByRole("textbox", { name: "Name" });
     const request = within(sheet).getByRole("textbox", { name: "Additional request (optional)" });
     expect(name.compareDocumentPosition(request) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sheet.querySelector("[data-started]")).toHaveAttribute("data-started", "false");
+  });
+
+  it("shows a spinner on Start while sending and keeps the label", async () => {
+    const d = roomy();
+    const release = d.hold("POST /api/items/EPIC-20/orchestrator");
+    const onClose = vi.fn();
+    const { user } = renderWithDaemon(<SpawnSheet itemKey="EPIC-20" onClose={onClose} />, {
+      daemon: d,
+      events: false,
+    });
+    const sheet = await screen.findByRole("dialog", { name: "Start orchestrator" });
+    const start = within(sheet).getByRole("button", { name: "Start orchestrator" });
+    await user.click(start);
+    expect(start).toBeDisabled();
+    expect(start).toHaveTextContent("Start orchestrator");
+    expect(start.querySelector("svg.animate-spin")).not.toBeNull();
+    release();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
   it("keeps Start disabled, without a spinner, while a file is still being prepared", async () => {
@@ -434,5 +453,44 @@ describe("SpawnSheet (§16.10)", () => {
     await close(user);
     expect(onClose).toHaveBeenCalled();
     expect(await screen.findByText(/^(Started|Queued) /)).toBeInTheDocument();
+  });
+
+  it("keeps the files-not-saved warning and entries when a reload fails", async () => {
+    const d = roomy();
+    d.db.failAttachments = true;
+    const { user } = renderWithDaemon(<SpawnSheet itemKey="EPIC-20" onClose={vi.fn()} />, {
+      daemon: d,
+      events: false,
+    });
+    const sheet = await screen.findByRole("dialog", { name: "Start orchestrator" });
+    const request = within(sheet).getByRole("textbox", { name: "Additional request (optional)" });
+    await user.type(request, "Look");
+    pastePng(request);
+    await within(sheet).findByRole("img", { name: "a.png" });
+    const agentsBefore = d.calls.filter((c) => c.path.startsWith("/api/agents")).length;
+    d.override("GET /api/agents", () => ({
+      status: 503,
+      body: {
+        error: { code: "unavailable", message: "blip", reason: "temporarily unavailable" },
+      },
+    }));
+    await user.click(within(sheet).getByRole("button", { name: "Start orchestrator" }));
+    await waitFor(() =>
+      expect(d.calls.filter((c) => c.path.startsWith("/api/agents")).length).toBeGreaterThan(
+        agentsBefore,
+      ),
+    );
+    const open = screen.getByRole("dialog", { name: "Start orchestrator" });
+    expect(
+      within(open).getByText(
+        "Started, but the attachments could not be saved. Share them with the orchestrator another way.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(open).getByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(within(open).queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(
+      within(open).getByRole("textbox", { name: "Additional request (optional)" }),
+    ).toHaveValue("Look");
+    expect(within(open).getByRole("img", { name: "a.png" })).toBeInTheDocument();
   });
 });

@@ -92,8 +92,10 @@ describe("useRequestAttachments and RequestField", () => {
     const dt = { types: ["Files"], files: [] as File[], dropEffect: "copy" };
     fireEvent.dragOver(document.body, { dataTransfer: dt });
     expect(dt.dropEffect).toBe("none");
-    // Inside the zone the guard stays out; the zone's own handler decides.
-    expect(zone.contains(zone.querySelector("textarea"))).toBe(true);
+    // Inside the zone the window guard stays out; the zone keeps the drop as a copy.
+    const over = { types: ["Files"], files: [] as File[], dropEffect: "none" };
+    fireEvent.dragOver(zone, { dataTransfer: over });
+    expect(over.dropEffect).toBe("copy");
     unmount();
     expect(fireEvent.dragOver(document.body, filesDrag())).toBe(true);
   });

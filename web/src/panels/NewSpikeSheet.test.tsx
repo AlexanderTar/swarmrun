@@ -1,9 +1,29 @@
-import { screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createMockDaemon } from "../mock/daemon";
 import { renderWithDaemon } from "../test/render";
 import { pickOption } from "../test/select";
 import { NewSpikeSheet } from "./NewSpikeSheet";
+
+vi.mock("../logic/requestImages", async (orig) => ({
+  ...(await orig<typeof import("../logic/requestImages")>()),
+  addImages: vi.fn(async (_n: number, files: { blob: Blob; name: string }[]) => ({
+    added: files.map((f) => ({
+      name: f.name,
+      blob: f.blob,
+      image: f.blob.type.startsWith("image/"),
+    })),
+  })),
+}));
+
+const png = (name = "a.png") =>
+  new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, { type: "image/png" });
+
+beforeEach(() => {
+  let n = 0;
+  URL.createObjectURL = vi.fn(() => `blob:mock/${++n}`);
+  URL.revokeObjectURL = vi.fn();
+});
 
 describe("NewSpikeSheet (§16.3, I15)", () => {
   it("stacks label over a wrapping Intent control and the footer below sm", async () => {
@@ -150,6 +170,46 @@ describe("NewSpikeSheet (§16.3, I15)", () => {
       expect(screen.queryByText("Couldn't load settings.")).not.toBeInTheDocument(),
     );
     expect(await screen.findByRole("textbox", { name: "Name" })).toBeInTheDocument();
+  });
+
+  it("keeps the files-not-saved warning and entries when a reload fails", async () => {
+    const d = createMockDaemon();
+    d.db.failAttachments = true;
+    d.db.settings.max_concurrent_agents = 8;
+    const { user } = renderWithDaemon(<NewSpikeSheet onClose={vi.fn()} onCreated={vi.fn()} />, {
+      daemon: d,
+      events: false,
+    });
+    const sheet = await screen.findByRole("dialog", { name: "New orchestrator" });
+    const request = within(sheet).getByRole("textbox", { name: "Request (optional)" });
+    await user.type(request, "Look");
+    fireEvent.paste(request, {
+      clipboardData: { files: [png()], types: ["Files"], getData: () => "" },
+    });
+    await within(sheet).findByRole("img", { name: "a.png" });
+    const agentsBefore = d.calls.filter((c) => c.path.startsWith("/api/agents")).length;
+    d.override("GET /api/agents", () => ({
+      status: 503,
+      body: {
+        error: { code: "unavailable", message: "blip", reason: "temporarily unavailable" },
+      },
+    }));
+    await user.click(within(sheet).getByRole("button", { name: "Start orchestrator" }));
+    await waitFor(() =>
+      expect(d.calls.filter((c) => c.path.startsWith("/api/agents")).length).toBeGreaterThan(
+        agentsBefore,
+      ),
+    );
+    const open = screen.getByRole("dialog", { name: "New orchestrator" });
+    expect(
+      within(open).getByText(
+        "Started, but the attachments could not be saved. Share them with the orchestrator another way.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(open).getByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(within(open).queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(within(open).getByRole("textbox", { name: "Request (optional)" })).toHaveValue("Look");
+    expect(within(open).getByRole("img", { name: "a.png" })).toBeInTheDocument();
   });
 
   it("offers Chore and sends it", async () => {
