@@ -120,7 +120,7 @@ func TestSameAgentHandoffNoteComesBeforeTheRequest(t *testing.T) {
 	if payload == "" {
 		t.Fatal("no note carries the request")
 	}
-	if strings.Index(payload, note) < 0 || strings.Index(payload, note) > strings.Index(payload, request) {
+	if !strings.Contains(payload, note) || strings.Index(payload, note) > strings.Index(payload, request) {
 		t.Fatalf("payload = %s, want %q before the request", payload, note)
 	}
 }
