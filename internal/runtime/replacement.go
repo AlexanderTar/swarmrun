@@ -411,6 +411,13 @@ func (s *Store) requestReplacement(ctx context.Context, agentID string, in repla
 // winning row instead of inserting a second one.
 var errDuplicateKey = errors.New("duplicate request key")
 
+// OperationByRequestKey re-reads the durable row for a replayed request
+// key. The handoff handler uses it to return a replay before touching
+// worker role overrides.
+func (s *Store) OperationByRequestKey(ctx context.Context, agentID, requestKey string) (Operation, error) {
+	return s.operationByKey(ctx, agentID, requestKey)
+}
+
 // operationByKey re-reads the durable row for a replayed request key.
 func (s *Store) operationByKey(ctx context.Context, agentID, requestKey string) (Operation, error) {
 	var op Operation

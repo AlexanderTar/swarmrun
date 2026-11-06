@@ -78,6 +78,18 @@ func (s *Server) handoffAgent(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
+	// A replayed request writes nothing, including role overrides: look the
+	// request key up before touching the overrides. No-entries handoffs
+	// skip this and keep today's path exactly.
+	if (strings.TrimSpace(body.Request) != "" || len(files) > 0) && body.RequestID != "" {
+		if op, err := s.RT.OperationByRequestKey(r.Context(), a.ID, body.RequestID); err == nil {
+			writeJSON(w, http.StatusAccepted, replacementOut(a.Name, op))
+			return
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			s.writeErr(w, err)
+			return
+		}
+	}
 	if body.Agent == "" && (body.Model != "" || body.Effort != "" || body.Advisor != nil) {
 		s.writeErr(w, apiErr(http.StatusBadRequest, "bad_request", "Choose an agent."))
 		return
