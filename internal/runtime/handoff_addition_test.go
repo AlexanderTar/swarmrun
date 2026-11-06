@@ -258,6 +258,22 @@ func TestSameKeyHandoffWhileParkedReturnsTheOperation(t *testing.T) {
 	}
 }
 
+func TestAppendTaskDescriptionSurvivesCancelledContext(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	orch := liveOrchestrator(t, s)
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	s.appendTaskDescription(cancelled, orch.ItemID, "## Additional request\n\nKeep this after disconnect.")
+	it, err := s.Items.Get(ctx, "EPIC-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(it.Brief, "Keep this after disconnect.") {
+		t.Fatalf("description = %q, want the addition despite the cancelled context", it.Brief)
+	}
+}
+
 func TestFullDescriptionHandoffSucceedsAndIsLogged(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()

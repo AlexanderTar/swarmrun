@@ -894,7 +894,7 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 		addition = renderAddition(in.Request, section)
 	}
 	op, inserted, err := s.requestReplacement(ctx, a.ID, replacementInput{
-		Mode: ModeRecover, SwitchJSON: switchJSON, BriefAddition: addition, AttachmentsFailed: failed,
+		Mode: ModeRecover, RequestKey: in.RequestID, SwitchJSON: switchJSON, BriefAddition: addition, AttachmentsFailed: failed,
 	})
 	if inserted {
 		committed = true
@@ -926,6 +926,9 @@ func (s *Store) appendTaskDescription(ctx context.Context, itemID, addition stri
 	if strings.TrimSpace(addition) == "" {
 		return
 	}
+	// The description write follows a committed operation: a client
+	// disconnect cancelling the request context must not drop it.
+	ctx = context.WithoutCancel(ctx)
 	var key string
 	if err := s.DB.QueryRowContext(ctx, `SELECT key FROM items WHERE id = ?`, itemID).Scan(&key); err != nil {
 		s.logf("orchestrator addition: read item %s: %v", itemID, err)

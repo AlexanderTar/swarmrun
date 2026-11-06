@@ -144,7 +144,7 @@ func (s *Server) startOrchestrator(w http.ResponseWriter, r *http.Request) {
 		var failed bool
 		a, _, err := s.RT.StartOrchestrator(ctx, runtime.OrchestratorInput{ItemKey: key, Kind: runtime.AgentKind(body.Agent),
 			Model: body.Model, Effort: body.Effort, Advisor: advisorChoiceFromBody(body.Advisor), Roles: rolesFromBody(body.Roles), Name: body.Name,
-			RepoPaths: repoPaths, Request: body.Request, Attachments: files, AttachmentsFailed: &failed})
+			RepoPaths: repoPaths, Request: body.Request, Attachments: files, AttachmentsFailed: &failed, RequestID: body.RequestID})
 		if err != nil {
 			return nil, wrapPreflightErr(err)
 		}

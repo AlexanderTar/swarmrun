@@ -268,6 +268,35 @@ func TestRestartWalkErrorKeepsFilesAndDescription(t *testing.T) {
 	}
 }
 
+func TestRetriedBlockedRestartWithSameRequestIDSavesOnce(t *testing.T) {
+	s, tm, _ := newStore(t)
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	orch := stopOrchestrator(t, s, "EPIC-1")
+	tm.startErr = errors.New("tmux refuses to start")
+	files := []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}}
+	in := OrchestratorInput{ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1",
+		RequestID: "req-1", Request: "Keep this.", Attachments: files}
+	for i := 0; i < 2; i++ {
+		_, _, err := s.StartOrchestrator(ctx, in)
+		var ie *items.Error
+		if !errors.As(err, &ie) || ie.Code != items.CodeConflict {
+			t.Fatalf("call %d: err = %v, want a blocked restart", i, err)
+		}
+	}
+	if batches := restartBatches(s.Home, "EPIC-1"); len(batches) != 1 {
+		t.Fatalf("batches = %v, want 1", batches)
+	}
+	got, _ := s.AgentByID(ctx, orch.ID)
+	it, _ := s.Items.Get(ctx, "EPIC-1")
+	if strings.Count(got.Brief, "Keep this.") != 1 {
+		t.Fatalf("stored brief = %q, want the request once", got.Brief)
+	}
+	if strings.Count(it.Brief, "Keep this.") != 1 {
+		t.Fatalf("description = %q, want the request once", it.Brief)
+	}
+}
+
 func TestRestartFilesOnCancelledRootAreRefused(t *testing.T) {
 	s, _, _ := newStore(t)
 	ctx := context.Background()

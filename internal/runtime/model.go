@@ -160,6 +160,10 @@ type OrchestratorInput struct {
 	Name      string
 	RepoPaths []string
 	Roles     map[Role]settings.RoleDefault
+	// RequestID is the start route's idempotency key. A retried restart
+	// reuses it as the replacement operation's key, so the retry replays
+	// the first operation instead of saving a second batch.
+	RequestID string
 
 	Request           string
 	Attachments       []attachments.File
