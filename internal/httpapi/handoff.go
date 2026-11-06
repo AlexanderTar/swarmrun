@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/AlexanderTar/swarmrun/internal/attachments"
 	"github.com/AlexanderTar/swarmrun/internal/runtime"
 )
 
@@ -43,7 +44,9 @@ type handoffBody struct {
 	Advisor   *advisorChoiceBody `json:"advisor,omitempty"` // object or "none"
 	// Roles are worker-role overrides persisted on the agent before the
 	// successor starts; absent leaves its overrides unchanged.
-	Roles map[string]roleDefaultBody `json:"roles,omitempty"`
+	Roles       map[string]roleDefaultBody `json:"roles,omitempty"`
+	Request     string                     `json:"request,omitempty"`
+	Attachments []attachmentBody           `json:"attachments,omitempty"`
 }
 
 func (s *Server) handoffAgent(w http.ResponseWriter, r *http.Request) {
@@ -52,9 +55,22 @@ func (s *Server) handoffAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body handoffBody
-	if err := readJSON(r, &body); err != nil {
+	if err := readJSONLimit(r, &body, 160<<20); err != nil {
 		s.writeErr(w, err)
 		return
+	}
+	var files []attachments.File
+	if len(body.Attachments) > 0 {
+		in := make([]attachments.Input, len(body.Attachments))
+		for i, a := range body.Attachments {
+			in[i] = attachments.Input{Name: a.Name, Data: a.Data}
+		}
+		decoded, err := attachments.Decode(in)
+		if err != nil {
+			s.writeErr(w, err)
+			return
+		}
+		files = decoded
 	}
 	name := r.PathValue("name")
 	a, err := s.RT.Agent(r.Context(), name)
@@ -78,14 +94,33 @@ func (s *Server) handoffAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var op runtime.Operation
-	switch {
-	case body.Agent != "":
-		op, err = s.RT.RequestHandoffTo(r.Context(), a.ID, body.RequestID, runtime.AgentSwitch{
-			Kind: runtime.AgentKind(body.Agent), Model: body.Model, Effort: body.Effort,
-			Advisor: advisorChoiceFromBody(body.Advisor)})
-		err = wrapPreflightErr(err)
-	default:
-		op, err = s.RT.RequestReplacement(r.Context(), a.ID, runtime.ModeHandoff, body.RequestID, body.Note)
+	if body.Request != "" || len(files) > 0 {
+		if a.Role != runtime.RoleOrchestrator {
+			err = apiErr(http.StatusBadRequest, "bad_request", "Only an orchestrator can take a request or files.")
+		} else if len(files) > 0 && body.RequestID == "" {
+			err = apiErr(http.StatusBadRequest, "bad_request", "Attachments need a request_id.")
+		} else {
+			var sw *runtime.AgentSwitch
+			if body.Agent != "" {
+				sw = &runtime.AgentSwitch{Kind: runtime.AgentKind(body.Agent), Model: body.Model,
+					Effort: body.Effort, Advisor: advisorChoiceFromBody(body.Advisor)}
+			}
+			op, err = s.RT.RequestHandoffWithAddition(r.Context(), runtime.HandoffAddition{
+				AgentID: a.ID, RequestKey: body.RequestID, Note: body.Note, Request: body.Request,
+				Switch: sw, Files: files,
+			})
+			err = wrapPreflightErr(err)
+		}
+	} else {
+		switch {
+		case body.Agent != "":
+			op, err = s.RT.RequestHandoffTo(r.Context(), a.ID, body.RequestID, runtime.AgentSwitch{
+				Kind: runtime.AgentKind(body.Agent), Model: body.Model, Effort: body.Effort,
+				Advisor: advisorChoiceFromBody(body.Advisor)})
+			err = wrapPreflightErr(err)
+		default:
+			op, err = s.RT.RequestReplacement(r.Context(), a.ID, runtime.ModeHandoff, body.RequestID, body.Note)
+		}
 	}
 	if err != nil {
 		if len(body.Roles) > 0 {

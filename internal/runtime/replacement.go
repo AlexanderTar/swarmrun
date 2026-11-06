@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AlexanderTar/swarmrun/internal/attachments"
 	"github.com/AlexanderTar/swarmrun/internal/db"
 	"github.com/AlexanderTar/swarmrun/internal/events"
 	"github.com/AlexanderTar/swarmrun/internal/ids"
@@ -92,8 +93,9 @@ func (s *Store) RequestReplacement(ctx context.Context, agentID string, mode Rep
 }
 
 const (
-	errSwitchNotOrchestrator = "Only an orchestrator can switch agents on handoff."
-	errSwitchNotLive         = "This orchestrator is no longer running. Reopen the list."
+	errSwitchNotOrchestrator   = "Only an orchestrator can switch agents on handoff."
+	errSwitchNotLive           = "This orchestrator is no longer running. Reopen the list."
+	errAdditionNotOrchestrator = "Only an orchestrator can take a request or files."
 )
 
 // RequestHandoffTo records a handoff whose successor runs as sw. A replayed
@@ -129,6 +131,117 @@ func (s *Store) RequestHandoffTo(ctx context.Context, agentID, requestKey string
 	}
 	op, _, err := s.requestReplacement(ctx, agentID, replacementInput{Mode: ModeHandoff, RequestKey: requestKey, SwitchJSON: string(b)})
 	return op, err
+}
+
+// HandoffAddition is a handoff that also carries a request and files.
+// Note is ignored when Switch is set, matching a plain switch handoff.
+type HandoffAddition struct {
+	AgentID, RequestKey, Note, Request string
+	Switch                             *AgentSwitch
+	Files                              []attachments.File
+}
+
+// RequestHandoffWithAddition records a handoff and keeps the request and
+// files on the stored brief, the task description and one note. A request
+// with no request text and no files takes today's handoff path unchanged.
+// A replay of a request that has entries returns the stored operation and
+// writes nothing, including after the root is accepted.
+func (s *Store) RequestHandoffWithAddition(ctx context.Context, in HandoffAddition) (Operation, error) {
+	if strings.TrimSpace(in.Request) == "" && len(in.Files) == 0 {
+		if in.Switch != nil {
+			return s.RequestHandoffTo(ctx, in.AgentID, in.RequestKey, *in.Switch)
+		}
+		return s.RequestReplacement(ctx, in.AgentID, ModeHandoff, in.RequestKey, in.Note)
+	}
+	if in.RequestKey != "" {
+		op, err := s.operationByKey(ctx, in.AgentID, in.RequestKey)
+		if err == nil {
+			return op, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Operation{}, err
+		}
+	}
+	a, err := s.agentByID(ctx, in.AgentID)
+	if err != nil {
+		return Operation{}, err
+	}
+	if a.Role != RoleOrchestrator {
+		return Operation{}, &items.Error{Code: items.CodeBadRequest, Message: errAdditionNotOrchestrator}
+	}
+	if in.Switch != nil && a.State != AgentQueued && a.State != AgentActive {
+		return Operation{}, &items.Error{Code: items.CodeConflict, Message: errSwitchNotLive}
+	}
+	done, err := s.rootIsDone(ctx, s.DB, a.RootItemID)
+	if err != nil {
+		return Operation{}, err
+	}
+	if done {
+		return Operation{}, &items.Error{Code: items.CodeConflict, Message: errRootAcceptedHandoff}
+	}
+	if _, err := s.LatestSession(ctx, in.AgentID); err != nil {
+		return Operation{}, &items.Error{Code: items.CodeBadRequest,
+			Message: "This agent has no session to replace yet."}
+	}
+	if err := s.refuseIfOperationInFlight(ctx, in.AgentID); err != nil {
+		return Operation{}, err
+	}
+	switchJSON := ""
+	if in.Switch != nil {
+		if err := s.Preflight(ctx, PreflightInput{Kind: in.Switch.Kind, Model: in.Switch.Model, Effort: in.Switch.Effort, Role: RoleOrchestrator}); err != nil {
+			return Operation{}, err
+		}
+		b, err := json.Marshal(in.Switch)
+		if err != nil {
+			return Operation{}, err
+		}
+		switchJSON = string(b)
+	}
+	var batch attachments.Batch
+	committed := false
+	defer func() {
+		if !committed && batch.Dir != "" {
+			os.RemoveAll(batch.Dir)
+		}
+	}()
+	var itemKey string
+	if err := s.DB.QueryRowContext(ctx, `SELECT key FROM items WHERE id = ?`, a.ItemID).Scan(&itemKey); err != nil {
+		return Operation{}, err
+	}
+	section := ""
+	failed := false
+	if len(in.Files) > 0 {
+		saved, err := attachments.Save(s.Home, itemKey, in.Files)
+		if err != nil {
+			failed = true
+			section = attachments.FailureSection(len(in.Files), err)
+		} else {
+			batch = saved
+			section = attachments.BriefSection(batch.Files)
+		}
+	}
+	addition := renderAddition(in.Request, section)
+	note := in.Note
+	if in.Switch != nil {
+		note = ""
+	}
+	op, inserted, err := s.requestReplacement(ctx, in.AgentID, replacementInput{
+		Mode: ModeHandoff, RequestKey: in.RequestKey, Note: note, SwitchJSON: switchJSON,
+		BriefAddition: addition, AttachmentsFailed: failed,
+	})
+	if inserted {
+		committed = true
+	}
+	if err != nil {
+		return Operation{}, err
+	}
+	if !inserted {
+		return op, nil
+	}
+	if addition != "" {
+		s.appendTaskDescription(ctx, a.ItemID, addition)
+	}
+	return op, nil
 }
 
 // applyAgentSwitch applies an operation's pending switch to the agent row
@@ -256,6 +369,13 @@ func (s *Store) requestReplacement(ctx context.Context, agentID string, in repla
 			op.SessionID, op.Generation, op.Note, switchJSON, now, now)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				if requestKey != "" {
+					var n int
+					if qerr := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_operations
+						WHERE agent_id = ? AND request_key = ?`, agentID, requestKey).Scan(&n); qerr == nil && n > 0 {
+						return errDuplicateKey
+					}
+				}
 				return &items.Error{Code: items.CodeConflict,
 					Message: "A replacement is already in progress for this agent."}
 			}
