@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { errorText } from "../api";
 import { AgentFields, type AgentFieldsValue } from "../components/AgentFields";
 import { RepoPicker } from "../components/RepoPicker";
-import { type RequestImage, RequestImages } from "../components/RequestImages";
+import { RequestField } from "../components/RequestField";
 import { Segmented } from "../components/Segmented";
 import { Sheet } from "../components/Sheet";
 import { useToast } from "../components/Toast";
@@ -12,13 +12,11 @@ import { Alert } from "../components/ui/alert";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
-import { Textarea } from "../components/ui/textarea";
 import { C, T } from "../copy";
 import { useConnection, useMutation } from "../data/hooks";
 import { useAgents, useCatalog, useSettings } from "../data/queries";
 import { isValid, prefill, validateChoice } from "../logic/catalog";
 import { kebab } from "../logic/kebab";
-import { addImages } from "../logic/requestImages";
 import {
   type SubmitFailure,
   mapSubmitError,
@@ -29,7 +27,7 @@ import {
   submitLabel,
 } from "../logic/spawnForm";
 import { startedToast } from "../logic/toasts";
-import { useMediaQuery } from "../state/media";
+import { useRequestAttachments } from "../logic/useRequestAttachments";
 import type {
   AgentCatalogEntry,
   AgentNode,
@@ -38,10 +36,6 @@ import type {
   Settings,
   SpikeIntent,
 } from "../types";
-
-const SNIFFED_TYPES = /^image\/(png|jpe?g|gif|webp|heic|heif|tiff?)$/;
-const hasFiles = (e: { dataTransfer: DataTransfer | null }) =>
-  Array.from(e.dataTransfer?.types ?? []).includes("Files");
 
 function Form(p: {
   settings: Settings;
@@ -54,7 +48,6 @@ function Form(p: {
   const { connected } = useConnection();
   const toast = useToast();
   const nameId = useId();
-  const requestIdField = useId();
   const [name, setName] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
   const [intent, setIntent] = useState<SpikeIntent>(p.intent ?? "chore");
@@ -62,36 +55,21 @@ function Form(p: {
   const [fields, setFields] = useState<AgentFieldsValue>(() =>
     prefill(p.settings, "orchestrator", p.catalog),
   );
-  const [request, setRequest] = useState("");
   const [requestId, setRequestId] = useState(newRequestId);
   const [failure, setFailure] = useState<SubmitFailure>({});
-  const [images, setImages] = useState<RequestImage[]>([]);
-  const [pending, setPending] = useState(0);
-  const [imageError, setImageError] = useState<string>();
-  const [dragging, setDragging] = useState(false);
   const [started, setStarted] = useState<CreateSpikeResponse>();
+  const attachments = useRequestAttachments({ disabled: !!started });
   const notSaved = useRef<HTMLDivElement>(null);
   const banner = useRef<HTMLDivElement>(null);
   const done = useRef<HTMLButtonElement>(null);
   const start = useRef<HTMLButtonElement>(null);
-  const imagesRef = useRef<RequestImage[]>([]);
-  const queue = useRef<Promise<void>>(Promise.resolve());
-  const alive = useRef(true);
-  const zone = useRef<HTMLDivElement>(null);
-  const depth = useRef(0);
-  const finePointer = useMediaQuery("(hover: hover) and (pointer: fine)");
-  const hint = finePointer
-    ? /Mac|iPhone|iPad/.test(navigator.userAgent)
-      ? C.requestImageHintMac
-      : C.requestImageHint
-    : undefined;
   const create = useMutation(
     (api, body: CreateSpikeBody) => api.createSpike(body),
     ["agents", "items", "item:"],
   );
   const busy = orchestratorsBusy(p.agents, p.settings);
   const tName = name.trim();
-  const tReq = request.trim();
+  const tReq = attachments.request.trim();
   const clientNameErr =
     tName === ""
       ? tReq === "" && nameTouched
@@ -111,7 +89,7 @@ function Form(p: {
   const canStart =
     connected &&
     !create.pending &&
-    pending === 0 &&
+    attachments.pending === 0 &&
     !started &&
     !nameErr &&
     agentChoiceValid &&
@@ -136,100 +114,6 @@ function Form(p: {
     if (failure.banner && !create.pending) start.current?.focus();
   }, [failure.banner, create.pending]);
 
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  // Window guard: a file dropped outside the zone would make the browser open it and lose the form.
-  useEffect(() => {
-    const guard = (e: DragEvent) => {
-      if (!hasFiles(e) || zone.current?.contains(e.target as Node)) return;
-      e.preventDefault();
-      if (e.type === "dragover" && e.dataTransfer) e.dataTransfer.dropEffect = "none";
-    };
-    window.addEventListener("dragover", guard);
-    window.addEventListener("drop", guard);
-    return () => {
-      window.removeEventListener("dragover", guard);
-      window.removeEventListener("drop", guard);
-    };
-  }, []);
-
-  const addFiles = (
-    files: File[],
-    fallbackName: string,
-    usable: (n: string) => boolean = (n) => n !== "",
-  ) => {
-    if (files.length === 0) return;
-    setPending((n) => n + files.length);
-    // The fallback names are .png; an unnamed file the image sniffer would not recognise (BMP, SVG, a PDF) must not get one.
-    const named = files.map((f) => ({
-      blob: f,
-      name: usable(f.name) ? f.name : SNIFFED_TYPES.test(f.type) ? fallbackName : C.unnamedFileName,
-    }));
-    queue.current = queue.current.then(async () => {
-      try {
-        const r = await addImages(imagesRef.current.length, named);
-        if (!alive.current) return;
-        const fresh = r.added.map((a) => ({
-          id: crypto.randomUUID(),
-          name: a.name,
-          blob: a.blob,
-          url: URL.createObjectURL(a.blob),
-          image: a.image,
-        }));
-        imagesRef.current = [...imagesRef.current, ...fresh];
-        setImages(imagesRef.current);
-        setImageError(r.error);
-      } catch {
-        // A file the browser cannot read (a folder dropped from Finder); keep the queue alive for later adds.
-        if (alive.current) setImageError(T.imageUnsupported(named.map((n) => n.name).join(", ")));
-      } finally {
-        setPending((n) => n - files.length);
-      }
-    });
-  };
-  const removeImage = (id: string) => {
-    imagesRef.current = imagesRef.current.filter((i) => i.id !== id);
-    setImages(imagesRef.current);
-    setImageError(undefined);
-  };
-  const onPaste = (e: React.ClipboardEvent) => {
-    const files = Array.from(e.clipboardData.files);
-    if (files.length === 0) return;
-    e.preventDefault();
-    // Browsers name every clipboard screenshot "image.png"; a pasted file that really is called that is renamed too.
-    addFiles(files, C.pastedImageName, (n) => n !== "" && n !== "image.png");
-  };
-  const zoneHandlers = {
-    onDragEnter: (e: React.DragEvent) => {
-      if (!hasFiles(e.nativeEvent)) return;
-      e.preventDefault();
-      depth.current += 1;
-      setDragging(true);
-    },
-    onDragOver: (e: React.DragEvent) => {
-      if (!hasFiles(e.nativeEvent)) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy";
-    },
-    onDragLeave: (e: React.DragEvent) => {
-      if (!hasFiles(e.nativeEvent)) return;
-      depth.current = Math.max(0, depth.current - 1);
-      if (depth.current === 0) setDragging(false);
-    },
-    onDrop: (e: React.DragEvent) => {
-      if (!hasFiles(e.nativeEvent)) return;
-      e.preventDefault();
-      depth.current = 0;
-      setDragging(false);
-      addFiles(Array.from(e.dataTransfer.files), C.droppedImageName);
-    },
-  };
-
   const finish = (r: CreateSpikeResponse) => {
     toast.success(startedToast(r.agent, r.item.key));
     p.onCreated(r.item.key);
@@ -241,7 +125,14 @@ function Form(p: {
     try {
       const r = await create.run(
         await spikePayload(
-          { name, intent, repos, request, images, fields },
+          {
+            name,
+            intent,
+            repos,
+            request: attachments.request,
+            images: attachments.images,
+            fields,
+          },
           p.settings,
           p.catalog,
           requestId,
@@ -356,32 +247,7 @@ function Form(p: {
           settings={p.settings}
           catalog={p.catalog}
         />
-        <div ref={zone} data-drop-zone className="space-y-1.5" {...zoneHandlers}>
-          <Label htmlFor={requestIdField}>{C.requestOptional}</Label>
-          <div className="relative">
-            <Textarea
-              id={requestIdField}
-              rows={5}
-              className="min-h-[108px]"
-              placeholder={hint}
-              value={request}
-              onChange={(e) => setRequest(e.target.value)}
-              onPaste={onPaste}
-            />
-            {dragging && (
-              <div className="pointer-events-none absolute inset-0 grid place-items-center rounded-md border-2 border-dashed border-ring bg-background text-sm font-medium text-link">
-                {C.dropImages}
-              </div>
-            )}
-          </div>
-          <RequestImages
-            images={images}
-            pending={pending}
-            error={imageError}
-            onAdd={(files) => addFiles(files, C.droppedImageName)}
-            onRemove={removeImage}
-          />
-        </div>
+        <RequestField label={C.requestOptional} state={attachments} />
       </div>
     </Sheet>
   );
