@@ -334,6 +334,69 @@ final class BoardHandoffRenderTests: XCTestCase {
         let scroll = try XCTUnwrap(formScrolls(host).first, "the form scrolls under a low limit")
         XCTAssertEqual(scroll.frame.height, 200, accuracy: 1)
     }
+
+    // MARK: files-not-saved (unit 5)
+
+    private func flaggedForm(selectedKey: String, handoff: Bool, client: MockDaemonClient) async throws -> BoardHandoffForm {
+        let model = makeAppModel(client)
+        await model.refresh()
+        let form = model.makeBoardHandoffForm()
+        await form.load()
+        form.selectedKey = selectedKey
+        form.request = "read this"
+        form.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        if handoff {
+            client.handoffResult = .success(HandoffResult(attachmentsFailed: true))
+        } else {
+            client.startResult = .success(StartedOrchestrator(
+                agent: AgentNode(name: "n", kind: .claude, model: "opus", role: .orchestrator), attachmentsFailed: true))
+        }
+        _ = await form.primary()
+        return form
+    }
+
+    func testUnsavedFilesWarningShowsForStart() async throws {
+        let client = try MockDaemonClient(fixtures: Fixture.dir)
+        let form = try await flaggedForm(selectedKey: "BUG-7", handoff: false, client: client)
+        let text = try ocrText(contentHost(form, height: 1000))
+        XCTAssertTrue(text.contains("Started, but the attachments could not be saved"), text)
+    }
+
+    func testUnsavedFilesWarningShowsForHandoff() async throws {
+        let client = try MockDaemonClient(fixtures: Fixture.dir)
+        let form = try await flaggedForm(selectedKey: "EPIC-12", handoff: true, client: client)
+        let text = try ocrText(contentHost(form, height: 1000))
+        XCTAssertTrue(text.contains("Handed off, but the attachments could not be saved"), text)
+    }
+
+    func testDoneFooterReplacesCaptionFooter() async throws {
+        let client = try MockDaemonClient(fixtures: Fixture.dir)
+        let model = makeAppModel(client)
+        await model.refresh()
+        var settings = model.state.settings
+        settings.maxConcurrentAgents = 1 // BUG-7 start queues, so the footer shows its caption
+        func startForm() async -> BoardHandoffForm {
+            let form = BoardHandoffForm(client: client, settings: settings, agents: model.state.agents,
+                                        connected: true, preselectAgent: nil)
+            await form.load()
+            form.selectedKey = "BUG-7"
+            form.request = "read this"
+            return form
+        }
+        let plain = await startForm()
+        let plainText = try ocrText(contentHost(plain, height: 1000))
+        // "available" misreads under OCR; the stable fragment pins the queued caption.
+        XCTAssertTrue(plainText.contains("agent slot becomes"), plainText)
+        let flagged = await startForm()
+        flagged.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        client.startResult = .success(StartedOrchestrator(
+            agent: AgentNode(name: "n", kind: .claude, model: "opus", role: .orchestrator), attachmentsFailed: true))
+        _ = await flagged.primary()
+        let flaggedText = try ocrText(contentHost(flagged, height: 1000))
+        XCTAssertTrue(flaggedText.contains("Started, but the attachments could not be saved"), flaggedText)
+        XCTAssertFalse(flaggedText.contains("agent slot becomes"),
+                       "the Done footer replaces the caption footer")
+    }
 }
 
 /// Offscreen SwiftUI buttons expose no measurable NSButton or accessibility frame, so the contract is pinned at

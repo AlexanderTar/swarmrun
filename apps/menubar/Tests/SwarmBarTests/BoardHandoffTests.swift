@@ -347,6 +347,52 @@ final class BoardHandoffTests: XCTestCase {
         XCTAssertEqual(form.request, "keep me", "entries survive the reload")
     }
 
+    func testAttachmentsFailedOnStartSetsNoticeWithStartWording() async throws {
+        let f = await form()
+        f.selectedKey = "BUG-7"
+        f.request = "read this"
+        f.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        client.startResult = .success(StartedOrchestrator(
+            agent: AgentNode(name: "n", kind: .claude, model: "opus", role: .orchestrator), attachmentsFailed: true))
+        let closed = await f.primary()
+        XCTAssertFalse(closed, "the window stays open for Done")
+        XCTAssertEqual(f.unsavedFilesNotice,
+                       "Started, but the attachments could not be saved. Share them with the orchestrator another way.")
+    }
+
+    func testAttachmentsFailedOnHandoffSetsNoticeWithHandoffWording() async throws {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        f.request = "read this"
+        f.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        client.handoffResult = .success(HandoffResult(attachmentsFailed: true))
+        let closed = await f.primary()
+        XCTAssertFalse(closed, "the window stays open for Done")
+        XCTAssertEqual(f.unsavedFilesNotice,
+                       "Handed off, but the attachments could not be saved. Share them with the orchestrator another way.")
+    }
+
+    func testUnsavedNoticeHoldsAfterAgentsUpdateChangesTheRow() async throws {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        f.request = "read this"
+        client.handoffResult = .success(HandoffResult(attachmentsFailed: true))
+        _ = await f.primary()
+        let notice = try XCTUnwrap(f.unsavedFilesNotice)
+        // Another row's orchestrator finishes: the rows change under the notice.
+        f.update(agents: state.agents.filter { $0.name != "billing-spike-orchestrator" })
+        XCTAssertEqual(f.unsavedFilesNotice, notice)
+    }
+
+    func testDoneStaysAvailableAfterUpdateAndWhenDisconnected() async throws {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        f.request = "read this"
+        client.handoffResult = .success(HandoffResult(attachmentsFailed: true))
+        _ = await f.primary()
+        f.update(agents: state.agents.filter { $0.name != "billing-spike-orchestrator" })
+        f.connected = false
+        XCTAssertFalse(f.canSubmit, "the primary path is dead while disconnected")
+        XCTAssertNotNil(f.unsavedFilesNotice, "Done stays available: it never reads canSubmit or connected")
+    }
+
     func testAppModelPreselectIsConsumedOnce() async {
         let model = makeAppModel(client)
         model.boardHandoffPreselect = "auth-epic-orchestrator"

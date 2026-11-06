@@ -133,6 +133,7 @@ public enum Copy {
     public static let imageTooMany = "Up to 10 attachments."
     public static func imageTooLarge(_ name: String) -> String { "\(name) is larger than 10 MB." }
     public static let imagesNotSaved = "Started, but the attachments could not be saved. Share them with the orchestrator another way."
+    public static let handoffImagesNotSaved = "Handed off, but the attachments could not be saved. Share them with the orchestrator another way."
     public static let done = "Done"
     public static let progressDone = "Done"
 

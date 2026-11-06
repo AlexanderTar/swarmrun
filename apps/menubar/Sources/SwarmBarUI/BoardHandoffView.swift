@@ -30,6 +30,12 @@ public struct BoardHandoffView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let notice = form.unsavedFilesNotice {
+                Label(notice, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 22)
+                    .padding(.top, 12)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
                     if let failure = form.failure {
@@ -65,14 +71,23 @@ public struct BoardHandoffView: View {
             }
             .frame(maxHeight: maxFormHeight)
             .scrollIndicators(.automatic)
+            // Once files-not-saved is set, the whole form is inert; only Done stays active.
+            // Done reads neither canSubmit nor connected, so it still closes the
+            // window after agent updates and while disconnected.
+            .disabled(form.unsavedFilesNotice != nil)
             Divider()
             HStack {
-                if let caption = form.caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
-                Spacer()
-                Button(Copy.cancel, action: onCancel).keyboardShortcut(.cancelAction)
-                Button(form.primaryLabel) { Task { if await form.primary() { onDone() } } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!form.canSubmit)
+                if form.unsavedFilesNotice != nil {
+                    Spacer()
+                    Button(Copy.done) { onDone() }.keyboardShortcut(.defaultAction)
+                } else {
+                    if let caption = form.caption { Text(caption).font(.caption).foregroundStyle(.secondary) }
+                    Spacer()
+                    Button(Copy.cancel, action: onCancel).keyboardShortcut(.cancelAction)
+                    Button(form.primaryLabel) { Task { if await form.primary() { onDone() } } }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(!form.canSubmit)
+                }
             }
             .padding(.horizontal, 22).padding(.vertical, 12)
         }

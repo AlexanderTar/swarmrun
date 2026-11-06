@@ -72,6 +72,9 @@ public final class BoardHandoffForm {
     public private(set) var loadError: String?
     public private(set) var failure: String?
     public private(set) var submitting = false
+    /// Set once a start or handoff returns with `attachments_failed: true`; the view swaps
+    /// the footer for Done. The wording is fixed when set, and later agent updates keep it.
+    public private(set) var unsavedFilesNotice: String?
     public var request = ""
     public let attachments = RequestImagesModel()
     public var connected: Bool
@@ -267,15 +270,22 @@ public final class BoardHandoffForm {
         let entryRequest = text.isEmpty ? nil : text
         do {
             if let orch = row.orchestrator {
-                _ = try await client.handoff(orch.name, HandoffRequest(requestId: requestID, agent: agent, model: attempt.model,
+                let result = try await client.handoff(orch.name, HandoffRequest(requestId: requestID, agent: agent, model: attempt.model,
                     effort: attempt.effort, advisor: attempt.advisor, roles: roles, request: entryRequest, attachments: files))
+                if result.attachmentsFailed == true {
+                    unsavedFilesNotice = Copy.handoffImagesNotSaved
+                }
             } else {
-                _ = try await client.startOrchestrator(itemKey: row.id, StartOrchestratorBody(requestId: requestID, agent: agent,
+                let started = try await client.startOrchestrator(itemKey: row.id, StartOrchestratorBody(requestId: requestID, agent: agent,
                     model: attempt.model, effort: attempt.effort, advisor: attempt.advisor, roles: roles,
                     request: entryRequest, attachments: files))
+                if started.attachmentsFailed == true {
+                    unsavedFilesNotice = Copy.imagesNotSaved
+                }
             }
             failure = nil
-            return true
+            // Files-not-saved keeps the window open on Done instead of closing it.
+            return unsavedFilesNotice == nil
         } catch let e as DaemonError {
             if case .api = e { requestID = UUID().uuidString; lastAttempt = nil }
             failure = e == .unreachable ? base : base + " " + e.message
