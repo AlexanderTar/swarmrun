@@ -542,8 +542,12 @@ final class NewOrchestratorRenderTests: XCTestCase {
                                  "tile label missing in \(boxes.map(\.0))")
         let counter = try XCTUnwrap(boxes.first { $0.0.contains("1 of 10") }?.1,
                                     "counter missing in \(boxes.map(\.0))")
+        let addFiles = try XCTUnwrap(boxes.first { $0.0.localizedCaseInsensitiveContains("add files") }?.1,
+                                     "Add files button missing in \(boxes.map(\.0))")
         XCTAssertEqual(tile.midY, counter.midY, accuracy: 2,
-                       "tile shares the strip's vertical centre with the counter (and the Add files button): tile \(tile) counter \(counter)")
+                       "tile shares the strip's vertical centre with the counter: tile \(tile) counter \(counter)")
+        XCTAssertEqual(tile.midY, addFiles.midY, accuracy: 4,
+                       "tile shares the strip's vertical centre with Add files: tile \(tile) button \(addFiles)")
     }
 
     func testStartedWithUnsavedImagesShowsWarningAndDoneButton() async throws {

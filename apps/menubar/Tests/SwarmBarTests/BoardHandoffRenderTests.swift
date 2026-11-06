@@ -376,18 +376,73 @@ final class BoardHandoffRenderTests: XCTestCase {
         XCTAssertEqual(scroll.frame.height, 200, accuracy: 1)
     }
 
-    /// The Done state at a low form height stays inside the visible area.
-    func testDoneStateWindowStaysWithinVisibleHeight() async throws {
+    /// The Done window budgets the notice line: height fits max form plus chrome.
+    /// Reverting windowChromeHeight to 96 makes the 200pt form's ~309pt Done
+    /// window exceed 200 + 96 and fail here.
+    func testDoneStateHeightBudgetsNoticeLine() async throws {
         let client = try MockDaemonClient(fixtures: Fixture.dir)
         let form = try await flaggedForm(selectedKey: "BUG-7", handoff: false, client: client)
         XCTAssertNotNil(form.unsavedFilesNotice)
         let window = openWindow(BoardHandoffView(form: form, onDone: {}, onCancel: {}, maxFormHeight: 200))
         defer { window.close() }
-        let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 800)
-        XCTAssertLessThanOrEqual(window.frame.height, visible.height + 2,
-                       "Done window height \(window.frame.height) fits in visible \(visible.height)")
+        XCTAssertLessThanOrEqual(window.frame.height, 200 + BoardHandoffView.windowChromeHeight + 2,
+                       "Done window height \(window.frame.height) fits 200pt form plus chrome \(BoardHandoffView.windowChromeHeight)")
+    }
+
+    /// The notice grows the window 28pt from a centred form position, so the
+    /// frame must be clamped back into the visible frame when it appears.
+    /// Without the clamp the bottom edge lands ~4.5pt below the visible area.
+    func testDoneStateStaysOnScreenAfterNoticeAppears() async throws {
+        let client = try MockDaemonClient(fixtures: Fixture.dir)
+        let model = makeAppModel(client)
+        await model.refresh()
+        let form = model.makeBoardHandoffForm()
+        await form.load()
+        form.selectedKey = "BUG-7"
+        form.request = "read this"
+        form.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        client.startResult = .success(StartedOrchestrator(
+            agent: AgentNode(name: "n", kind: .claude, model: "opus", role: .orchestrator), attachmentsFailed: true))
+        // Bottom-pin the form window to the real visible edge: the notice grows
+        // the window downward, so without the clamp the Done footer ends up
+        // below the visible area.
+        let window = openWindow(BoardHandoffView(form: form, onDone: {}, onCancel: {}))
+        defer { window.close() }
+        let visible = (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
+        XCTAssertNil(form.unsavedFilesNotice, "window opens in the form state")
+        // Spend the one-shot WindowCenterAccessor recentre on a dummy file-row
+        // resize: in the app the window opens as a spinner and recentres when
+        // the form arrives, so the notice growth is never recentred.
+        form.attachments.addImage(data: Data("p".utf8), name: "probe.txt")
+        try await taskSleep(.milliseconds(300))
+        form.attachments.removeImage(form.attachments.images.first!.id)
+        try await taskSleep(.milliseconds(300))
+        window.setFrameOrigin(NSPoint(x: visible.midX - window.frame.width / 2, y: visible.minY))
+        let pinnedHeight = window.frame.height
+        _ = await form.primary()
+        XCTAssertNotNil(form.unsavedFilesNotice, "submit reaches the Done state")
+        try await taskSleep(.milliseconds(500))
+        XCTAssertLessThanOrEqual(window.frame.height,
+                       BoardHandoffView.defaultMaxFormHeight + BoardHandoffView.windowChromeHeight + 2,
+                       "Done window height \(window.frame.height) fits the form plus chrome")
+        XCTAssertGreaterThan(pinnedHeight, 0, "sanity: pinned a real window")
         XCTAssertGreaterThanOrEqual(window.frame.minY, visible.minY - 2,
                        "Done window stays on screen: \(window.frame) in \(visible)")
+        XCTAssertLessThanOrEqual(window.frame.maxY, visible.maxY + 2,
+                       "Done window stays on screen: \(window.frame) in \(visible)")
+    }
+
+    /// Pure clamp: a centred form that grows 28pt downward with a fixed top
+    /// must move back inside the visible frame.
+    func testClampedFrameKeepsGrownWindowInsideVisibleFrame() {
+        let visible = NSRect(x: 0, y: 57, width: 1440, height: 328)
+        // Centred 281pt form leaves 23.5pt margins; growing 28pt downward
+        // with a fixed top pushes the bottom 4.5pt past the visible edge.
+        let grown = NSRect(x: (visible.width - 820) / 2, y: visible.minY - 4.5, width: 820, height: 309)
+        let clamped = WindowVisibleClampAccessor.clampedFrame(grown, in: visible)
+        XCTAssertGreaterThanOrEqual(clamped.minY, visible.minY - 0.5, "clamped \(clamped) in \(visible)")
+        XCTAssertLessThanOrEqual(clamped.maxY, visible.maxY + 0.5, "clamped \(clamped) in \(visible)")
+        XCTAssertEqual(clamped.size, grown.size, "clamping moves, never resizes")
     }
 
     // MARK: files-not-saved (unit 5)

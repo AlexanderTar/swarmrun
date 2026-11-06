@@ -97,6 +97,7 @@ public struct BoardHandoffView: View {
         .translucentDialogBackground()
         .background(TranslucentWindowAccessor())
         .background(WindowCenterAccessor())
+        .background(WindowVisibleClampAccessor(active: form.unsavedFilesNotice != nil))
     }
 
     private func detailLine(_ row: BoardItemRow) -> NSAttributedString {

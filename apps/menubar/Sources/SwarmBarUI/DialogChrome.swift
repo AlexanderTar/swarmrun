@@ -74,6 +74,70 @@ public struct TranslucentWindowAccessor: NSViewRepresentable {
     }
 }
 
+/// Clamps a dialog's window back into the visible frame when the Done notice
+/// grows it: the window keeps its top edge and extends downward, so a centred
+/// form ends ~4.5pt below the visible area on a short screen. Pure
+/// `clampedFrame` is unit-tested; the accessor applies it after layout.
+public struct WindowVisibleClampAccessor: NSViewRepresentable {
+    public let active: Bool
+
+    public init(active: Bool) { self.active = active }
+
+    public final class AccessorView: NSView {
+        var active = false
+
+        override public func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if active { clampSoon() }
+        }
+
+        func clampSoon() {
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let window, let self, self.active else { return }
+                window.setFrame(Self.clampedFrame(window.frame, in: Self.visibleFrame(for: window)), display: true)
+            }
+        }
+
+        static func visibleFrame(for window: NSWindow) -> NSRect {
+            (window.screen ?? NSScreen.main)?.visibleFrame ?? window.frame
+        }
+
+        /// Moves `frame` the minimum distance to fit inside `visible`;
+        /// never resizes. Oversized frames pin to the visible bottom so the
+        /// Done footer stays reachable.
+        public static func clampedFrame(_ frame: NSRect, in visible: NSRect) -> NSRect {
+            var origin = frame.origin
+            if frame.width >= visible.width {
+                origin.x = visible.minX
+            } else {
+                origin.x = min(max(origin.x, visible.minX), visible.maxX - frame.width)
+            }
+            if frame.height >= visible.height {
+                origin.y = visible.minY
+            } else {
+                origin.y = min(max(origin.y, visible.minY), visible.maxY - frame.height)
+            }
+            return NSRect(origin: origin, size: frame.size)
+        }
+    }
+
+    public func makeNSView(context: Context) -> AccessorView {
+        let view = AccessorView(frame: .zero)
+        view.active = active
+        return view
+    }
+
+    public func updateNSView(_ nsView: AccessorView, context: Context) {
+        nsView.active = active
+        if active { nsView.clampSoon() }
+    }
+
+    /// Test seam: pure geometry without a window.
+    public static func clampedFrame(_ frame: NSRect, in visible: NSRect) -> NSRect {
+        AccessorView.clampedFrame(frame, in: visible)
+    }
+}
+
 /// Centers a dialog's window on its screen when it opens and once more on the first resize
 /// (Orchestrate task opens as a small spinner, then grows to the form; the restored origin
 /// would leave it off-centre). After that the user's placement wins.
