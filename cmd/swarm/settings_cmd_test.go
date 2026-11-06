@@ -36,6 +36,32 @@ func TestSettingsCommandPrintsAndPatchesOneSetting(t *testing.T) {
 	}
 }
 
+func TestSettingsSetTakesTextForATextSetting(t *testing.T) {
+	srv, got, home := stubDaemon(t, map[string]string{
+		"GET /api/settings":   `{"instructions":"old","max_concurrent_agents":4}`,
+		"PATCH /api/settings": `{"instructions":"new","max_concurrent_agents":6}`,
+	})
+	defer srv.Close()
+	for _, tc := range []struct{ key, value, body string }{
+		{"instructions", "42", `{"instructions":"42"}`},
+		{"instructions", "null", `{"instructions":"null"}`},
+		{"instructions", "true", `{"instructions":"true"}`},
+		{"instructions", `{"a":1}`, `{"instructions":"{\"a\":1}"}`},
+		{"instructions", "be brief", `{"instructions":"be brief"}`},
+		{"instructions", `"quoted"`, `{"instructions":"quoted"}`},
+		{"max_concurrent_agents", "6", `{"max_concurrent_agents":6}`},
+	} {
+		var out bytes.Buffer
+		if code := run([]string{"settings", "--home", home, "--url", srv.URL, "set", tc.key, tc.value}, &out, &out); code != 0 {
+			t.Errorf("set %s %s = %d %q", tc.key, tc.value, code, out.String())
+			continue
+		}
+		if last := (*got)[len(*got)-1]; last.method != "PATCH" || last.body != tc.body {
+			t.Errorf("set %s %s sent %+v, want PATCH %s", tc.key, tc.value, last, tc.body)
+		}
+	}
+}
+
 func TestSettingsCommandReportsTheDaemonsRefusal(t *testing.T) {
 	srv, _, home := stubDaemon(t, map[string]string{})
 	defer srv.Close()

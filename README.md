@@ -162,7 +162,7 @@ On Linux `swarm install` writes `~/.config/systemd/user/dev.swarm.daemon.service
 
 What differs from macOS:
 
-- **No menu bar.** Change settings with `swarm settings` and `swarm settings set KEY VALUE` (for example `swarm settings set max_concurrent_agents 6`, or `swarm settings set enabled_agents '["claude","codex"]'`). List notifications with `swarm notifications` (`--unread`, `--read-all`). Usage is `swarm usage`.
+- **No menu bar.** Change settings with `swarm settings` and `swarm settings set KEY VALUE` (for example `swarm settings set max_concurrent_agents 6`, or `swarm settings set enabled_agents '["claude","codex"]'`). For `roles` and `notifications`, name only the entries to change: the others stay as they are, and `null` puts an entry back to its default. List notifications with `swarm notifications` (`--unread`, `--read-all`). Usage is `swarm usage`.
 - **Notifications** show as desktop notifications (`notify-send`), following the same per-level center and sound settings. Only the installed daemon shows them.
 - **Terminal button** on the board opens the agent's tmux session in your terminal emulator on the current desktop session. Over SSH or with no desktop, use `swarm attach NAME`.
 - **Usage numbers**: Claude's come from `~/.claude/.credentials.json` instead of the keychain. Cursor's are not available yet on Linux.
@@ -222,7 +222,7 @@ swarm open [KEY]                   open the board
 swarm kb search QUERY | kb status
 swarm repos [--rescan] | repos add PATH
 swarm usage [--refresh]
-swarm settings | settings set KEY VALUE   print the settings, or change one (VALUE is JSON; a bare word is a string)
+swarm settings | settings set KEY VALUE   print the settings, or change one (VALUE is JSON, or plain text for a text setting)
 swarm notifications [--unread] [--read-all]   list notifications, or mark them all read
 swarm migrate [--dry-run | --resume | --rollback] [--live]
 swarm uninstall                    remove the daemon service and agent integrations (keeps data)

@@ -30,10 +30,12 @@ func cmdSettings(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, b.String())
 		return 0
 	case len(rest) == 3 && rest[0] == "set":
-		key, val := rest[1], json.RawMessage(rest[2])
-		if !json.Valid(val) {
-			val, _ = json.Marshal(rest[2]) // a bare word is a string: swarm settings set ... claude
+		key := rest[1]
+		var cur map[string]json.RawMessage
+		if err := c.do("GET", "/api/settings", nil, &cur); err != nil {
+			return fail(stderr, err)
 		}
+		val := settingValue(cur[key], rest[2])
 		var saved map[string]json.RawMessage
 		if err := c.do("PATCH", "/api/settings", map[string]json.RawMessage{key: val}, &saved); err != nil {
 			return fail(stderr, err)
@@ -41,8 +43,23 @@ func cmdSettings(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "%s = %s\n", key, saved[key])
 		return 0
 	}
-	fmt.Fprint(stderr, "Usage: swarm settings | swarm settings set KEY VALUE (VALUE is JSON; a bare word is a string)\n")
+	fmt.Fprint(stderr, "Usage: swarm settings | swarm settings set KEY VALUE (VALUE is JSON, or plain text for a text setting)\n")
 	return 2
+}
+
+// settingValue is the JSON `settings set` sends for value. A setting that holds
+// text takes value as that text whatever it looks like (42, null), so the
+// result does not depend on how the words happen to parse; a JSON string is
+// unquoted first. Any other setting takes JSON, and what isn't JSON goes as a
+// string for the daemon to refuse by name.
+func settingValue(current json.RawMessage, value string) json.RawMessage {
+	raw := json.RawMessage(value)
+	isText := bytes.HasPrefix(current, []byte(`"`))
+	if json.Valid(raw) && (!isText || strings.HasPrefix(value, `"`)) {
+		return raw
+	}
+	out, _ := json.Marshal(value)
+	return out
 }
 
 // cmdNotifications lists the notifications the menu bar would show, newest

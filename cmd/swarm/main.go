@@ -48,7 +48,7 @@ Commands:
   tunnel enable [--url wss://RELAY] | disable | status   reach the board through the relay (needs swarm auth set)
   lan enable | disable | status   serve the board on the local network as swarm.local (needs swarm auth set)
   usage [--refresh]
-  settings | settings set KEY VALUE  print the settings, or change one (VALUE is JSON; a bare word is a string)
+  settings | settings set KEY VALUE  print the settings, or change one (VALUE is JSON, or plain text for a text setting)
   notifications [--unread] [--read-all]  list notifications, newest first, or mark them all read
   cleanup [--dry-run] [--no-grace] [--discard PATH]
                                    remove finished agents' work dirs, orphan work dirs and reclaimable worktrees; --discard drops one tree no live agent holds (branch kept)
