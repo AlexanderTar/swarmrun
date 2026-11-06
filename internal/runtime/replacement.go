@@ -356,9 +356,10 @@ func (s *Store) requestReplacement(ctx context.Context, agentID string, in repla
 			if _, err := tx.ExecContext(ctx, `UPDATE agents SET brief = ? WHERE id = ?`, next, agentID); err != nil {
 				return err
 			}
-			opNote = strings.TrimSpace(in.BriefAddition)
+			additionNote := userAddedLine + "\n\n" + strings.TrimSpace(in.BriefAddition)
+			opNote = additionNote
 			if strings.TrimSpace(note) != "" {
-				opNote = strings.TrimSpace(note) + "\n\n" + opNote
+				opNote = strings.TrimSpace(note) + "\n\n" + additionNote
 			}
 		}
 		now := db.Millis(s.now())
