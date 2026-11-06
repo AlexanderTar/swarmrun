@@ -883,10 +883,7 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 	// A replay saves nothing: look the key up before touching disk.
 	if requestKey != "" {
 		if op, err := s.operationByKey(ctx, a.ID, requestKey); err == nil {
-			if op.AttachmentsFailed && in.AttachmentsFailed != nil {
-				*in.AttachmentsFailed = true
-			}
-			return s.restartTailResult(ctx, a, op)
+			return s.restartTailResult(ctx, a, op, in.AttachmentsFailed)
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return Agent{}, false, err
 		}
@@ -916,27 +913,27 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 	})
 	if inserted {
 		committed = true
-		if failed && in.AttachmentsFailed != nil {
-			*in.AttachmentsFailed = true
-		}
 		if addition != "" {
 			s.appendTaskDescription(ctx, a.ItemID, addition)
 		}
-	} else if op.AttachmentsFailed && in.AttachmentsFailed != nil {
-		// A replayed request key re-reads the stored operation: report its
-		// flag even when this call's own save succeeded.
-		*in.AttachmentsFailed = true
 	}
 	if err != nil {
 		return Agent{}, false, err
 	}
-	return s.restartTailResult(ctx, a, op)
+	// A replayed request key re-reads the stored operation (and an insert
+	// stores this call's own flag): report it even when this call's save
+	// succeeded.
+	return s.restartTailResult(ctx, a, op, in.AttachmentsFailed)
 }
 
 // restartTailResult reports a stored replacement operation without touching
-// disk: a blocked recovery stays a conflict, otherwise the agent returns with
-// whether it still needs waiting (queued reports a wait in progress).
-func (s *Store) restartTailResult(ctx context.Context, a Agent, op Operation) (Agent, bool, error) {
+// disk: it carries the stored attachments-failed flag, a blocked recovery
+// stays a conflict, otherwise the agent returns with whether it still needs
+// waiting (queued reports a wait in progress).
+func (s *Store) restartTailResult(ctx context.Context, a Agent, op Operation, failedFlag *bool) (Agent, bool, error) {
+	if op.AttachmentsFailed && failedFlag != nil {
+		*failedFlag = true
+	}
 	if op.Phase == PhaseBlocked {
 		return Agent{}, false, &items.Error{Code: items.CodeConflict,
 			Message: fmt.Sprintf("Recovery %s is blocked: %s", op.ID, op.Error)}
