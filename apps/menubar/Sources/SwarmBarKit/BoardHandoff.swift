@@ -117,13 +117,31 @@ public final class BoardHandoffForm {
     }
 
     /// Re-join on every state change; keeps the selection while it is still eligible.
+    /// When the selected row is gone, entries on the form clear the selection
+    /// instead of jumping to another item, so Start stays disabled until the
+    /// user picks one; without entries the selection jumps as it always has.
     public func update(agents: [AgentNode]) {
         self.agents = agents
         rows = BoardHandoffRules.rows(items, agents: agents)
-        if selected == nil { selectedKey = rows.first?.id }
+        if selected == nil { selectedKey = hasEntries ? nil : rows.first?.id }
     }
 
     public var selected: BoardItemRow? { rows.first { $0.id == selectedKey } }
+
+    /// Typed text or files, kept across selection and agent updates.
+    public var hasEntries: Bool {
+        !request.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || attachments.payload != nil
+    }
+
+    /// "Hand off to…" while the window is open: move the selection to the
+    /// agent's item without rebuilding the form, so typed entries survive.
+    /// False when the agent's item is not in the form's list.
+    @discardableResult
+    public func selectAgent(_ name: String) -> Bool {
+        guard let row = rows.first(where: { $0.orchestrator?.name == name }) else { return false }
+        selectedKey = row.id
+        return true
+    }
     public var isHandoff: Bool { selected?.orchestrator != nil }
     private var queued: Bool { NewOrchestratorForm.wouldQueue(agents, max: picker.settings.maxConcurrentAgents) }
     private var handoffPossible: Bool { selected?.orchestrator.map { BoardHandoffRules.canHandOff($0, connected: connected) } ?? false }

@@ -262,8 +262,16 @@ struct BoardHandoffHost: View {
         }
         .onAppear { reopen() }
         .onDisappear { form = nil }
-        // "Hand off to…" while the window is already open: rebuild with the new preselection.
-        .onChange(of: model.boardHandoffPreselect) { _, name in if name != nil { reopen() } }
+        // "Hand off to…" while the window is already open: with entries on the
+        // live form, move its selection instead of rebuilding so they survive;
+        // otherwise rebuild with the new preselection.
+        .onChange(of: model.boardHandoffPreselect) { _, name in
+            if let name, let live = form, live.hasEntries {
+                Task { await model.selectHandoffAgent(name, on: live) }
+            } else if name != nil {
+                reopen()
+            }
+        }
         .onChange(of: model.state.agents) { _, a in form?.update(agents: a) }
         .onChange(of: model.connected) { _, up in form?.connected = up }
     }

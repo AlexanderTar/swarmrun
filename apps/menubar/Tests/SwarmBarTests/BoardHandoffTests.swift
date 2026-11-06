@@ -262,6 +262,91 @@ final class BoardHandoffTests: XCTestCase {
         XCTAssertNotEqual(f.selectedKey, "EPIC-12", "EPIC-12 is in progress without a live orchestrator → gone")
     }
 
+    func testSelectingAnotherItemKeepsEntries() async {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        f.request = "keep me"
+        f.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        f.selectedKey = "BUG-7"
+        XCTAssertEqual(f.request, "keep me")
+        XCTAssertEqual(f.attachments.images.map(\.name), ["a.txt"])
+    }
+
+    func testUpdateWithSelectedRowGoneClearsSelectionWhenEntriesExist() async {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        f.request = "keep me"
+        f.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        var agents = state.agents
+        agents[0].state = .finished // auth-epic-orchestrator gone: EPIC-12 leaves the list
+        f.update(agents: agents)
+        XCTAssertNil(f.selectedKey, "ineligible selection clears instead of jumping")
+        XCTAssertFalse(f.canSubmit, "Start stays disabled until another item is picked")
+        XCTAssertEqual(f.request, "keep me")
+        XCTAssertEqual(f.attachments.images.map(\.name), ["a.txt"])
+    }
+
+    func testUpdateWithSelectedRowGoneJumpsWhenNoEntries() async {
+        let f = await form(preselect: "auth-epic-orchestrator")
+        var agents = state.agents
+        agents[0].state = .finished
+        f.update(agents: agents)
+        XCTAssertEqual(f.selectedKey, f.rows.first?.id, "no entries: today's jump to the first row")
+    }
+
+    func testStartToHandoffFlipKeepsEntries() async {
+        let f = await form()
+        f.selectedKey = "BUG-7"
+        XCTAssertFalse(f.isHandoff)
+        f.request = "keep me"
+        f.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        var agents = state.agents
+        agents.append(AgentNode(name: "bug7-orch", kind: .claude, model: "opus", role: .orchestrator,
+                                itemKey: "BUG-7", itemTitle: "Login crash", rootKey: "BUG-7",
+                                state: .active, session: SessionInfo(state: .running)))
+        f.update(agents: agents)
+        XCTAssertEqual(f.selectedKey, "BUG-7")
+        XCTAssertTrue(f.isHandoff)
+        XCTAssertEqual(f.request, "keep me")
+        XCTAssertEqual(f.attachments.images.map(\.name), ["a.txt"])
+    }
+
+    func testHandOffToWhileOpenSelectsWithoutRebuildAndClearsPreselect() async throws {
+        let model = makeAppModel(client)
+        await model.refresh()
+        model.boardHandoffPreselect = "auth-epic-orchestrator"
+        let form = model.makeBoardHandoffForm()
+        await form.load()
+        form.selectedKey = "BUG-7"
+        form.request = "keep me"
+        form.attachments.addImage(data: Data("x".utf8), name: "a.txt")
+        model.boardHandoffPreselect = "auth-epic-orchestrator"
+        await model.selectHandoffAgent("auth-epic-orchestrator", on: form)
+        XCTAssertNil(model.boardHandoffPreselect)
+        XCTAssertEqual(form.selectedKey, "EPIC-12")
+        XCTAssertEqual(form.request, "keep me", "entries survive: the form is not rebuilt")
+        XCTAssertEqual(form.attachments.images.map(\.name), ["a.txt"])
+    }
+
+    func testHandOffToWhileOpenReloadsWhenTargetIsMissing() async throws {
+        let model = makeAppModel(client)
+        await model.refresh()
+        let form = model.makeBoardHandoffForm()
+        await form.load()
+        form.request = "keep me"
+        XCTAssertFalse(form.selectAgent("fresh-orch"), "target item is not in the form's list yet")
+        client.boardItemList.append(BoardItem(key: "CHORE-20", type: "chore", status: "ready", title: "Fresh"))
+        var st = try client.stateResult.get()
+        st.agents.append(AgentNode(name: "fresh-orch", kind: .claude, model: "opus", role: .orchestrator,
+                                   itemKey: "CHORE-20", itemTitle: "Fresh", rootKey: "CHORE-20",
+                                   state: .active, session: SessionInfo(state: .running)))
+        client.stateResult = .success(st)
+        await model.refresh()
+        model.boardHandoffPreselect = "fresh-orch"
+        await model.selectHandoffAgent("fresh-orch", on: form)
+        XCTAssertNil(model.boardHandoffPreselect)
+        XCTAssertEqual(form.selectedKey, "CHORE-20")
+        XCTAssertEqual(form.request, "keep me", "entries survive the reload")
+    }
+
     func testAppModelPreselectIsConsumedOnce() async {
         let model = makeAppModel(client)
         model.boardHandoffPreselect = "auth-epic-orchestrator"

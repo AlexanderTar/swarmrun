@@ -672,6 +672,19 @@ public final class AppModel {
                                 preselectAgent: boardHandoffPreselect)
     }
 
+    /// "Hand off to…" while the Orchestrate task window is open: move the live
+    /// form's selection without rebuilding it, so typed entries survive. When
+    /// the agent's item is not in the form's list, reload the items first.
+    public func selectHandoffAgent(_ name: String, on form: BoardHandoffForm) async {
+        boardHandoffPreselect = nil
+        // The live form's agents can lag the model; re-join before looking.
+        form.update(agents: state.agents)
+        guard !form.selectAgent(name) else { return }
+        await form.load()
+        form.update(agents: state.agents)
+        form.selectAgent(name)
+    }
+
     /// Bumped by requestNewOrchestrator(); the New orchestrator window host rebuilds a fresh form on each change.
     public private(set) var newOrchestratorOpenNonce = 0
 
