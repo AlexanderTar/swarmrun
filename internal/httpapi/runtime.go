@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AlexanderTar/swarmrun/internal/adapter"
+	"github.com/AlexanderTar/swarmrun/internal/attachments"
 	"github.com/AlexanderTar/swarmrun/internal/db"
 	"github.com/AlexanderTar/swarmrun/internal/kinds"
 	"github.com/AlexanderTar/swarmrun/internal/notify"
@@ -359,6 +360,19 @@ func rolesFromBody(b map[string]roleDefaultBody) map[runtime.Role]settings.RoleD
 type attachmentBody struct {
 	Name string `json:"name"`
 	Data string `json:"data"`
+}
+
+// decodeAttachments validates one request's attachment bodies without
+// touching disk; a 400 means nothing was created. Empty stays empty.
+func decodeAttachments(in []attachmentBody) ([]attachments.File, error) {
+	if len(in) == 0 {
+		return nil, nil
+	}
+	inputs := make([]attachments.Input, len(in))
+	for i, a := range in {
+		inputs[i] = attachments.Input{Name: a.Name, Data: a.Data}
+	}
+	return attachments.Decode(inputs)
 }
 
 type spikeRequestBody struct {

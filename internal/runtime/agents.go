@@ -873,9 +873,35 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 		}
 		switchJSON = string(b)
 	}
+	// Only entries ride an idempotency key: a plain retry must behave as on
+	// main and start fresh instead of replaying an old operation.
+	hasEntries := strings.TrimSpace(in.Request) != "" || len(in.Attachments) > 0
+	requestKey := ""
+	if hasEntries {
+		requestKey = in.RequestID
+	}
+	// A replay saves nothing: look the key up before touching disk.
+	if requestKey != "" {
+		if op, err := s.operationByKey(ctx, a.ID, requestKey); err == nil {
+			if op.AttachmentsFailed && in.AttachmentsFailed != nil {
+				*in.AttachmentsFailed = true
+			}
+			if op.Phase == PhaseBlocked {
+				return Agent{}, false, &items.Error{Code: items.CodeConflict,
+					Message: fmt.Sprintf("Recovery %s is blocked: %s", op.ID, op.Error)}
+			}
+			out, err := s.agentByID(ctx, a.ID)
+			if err != nil {
+				return Agent{}, false, err
+			}
+			return out, op.Phase != PhaseSucceeded, nil
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return Agent{}, false, err
+		}
+	}
 	addition := ""
 	failed := false
-	if strings.TrimSpace(in.Request) != "" || len(in.Attachments) > 0 {
+	if hasEntries {
 		var itemKey string
 		if err := s.DB.QueryRowContext(ctx, `SELECT key FROM items WHERE id = ?`, a.ItemID).Scan(&itemKey); err != nil {
 			return Agent{}, false, err
@@ -892,12 +918,6 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 			}
 		}
 		addition = renderAddition(in.Request, section)
-	}
-	// Only entries ride an idempotency key: a plain retry must behave as on
-	// main and start fresh instead of replaying an old operation.
-	requestKey := ""
-	if strings.TrimSpace(in.Request) != "" || len(in.Attachments) > 0 {
-		requestKey = in.RequestID
 	}
 	op, inserted, err := s.requestReplacement(ctx, a.ID, replacementInput{
 		Mode: ModeRecover, RequestKey: requestKey, SwitchJSON: switchJSON, BriefAddition: addition, AttachmentsFailed: failed,

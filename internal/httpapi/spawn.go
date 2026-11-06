@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/AlexanderTar/swarmrun/internal/attachments"
 	"github.com/AlexanderTar/swarmrun/internal/items"
 	"github.com/AlexanderTar/swarmrun/internal/runtime"
 )
@@ -45,11 +44,7 @@ func (s *Server) createSpike(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	in := make([]attachments.Input, len(body.Attachments))
-	for i, a := range body.Attachments {
-		in[i] = attachments.Input{Name: a.Name, Data: a.Data}
-	}
-	files, err := attachments.Decode(in)
+	files, err := decodeAttachments(body.Attachments)
 	if err != nil {
 		// Decode never touches disk, so a 400 here means nothing was created
 		// (spec Locked Decision 5 / plan Task 3 step 1).
@@ -111,18 +106,10 @@ func (s *Server) startOrchestrator(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, apiErr(http.StatusBadRequest, "bad_request", "Attachments need a request_id."))
 		return
 	}
-	var files []attachments.File
-	if len(body.Attachments) > 0 {
-		in := make([]attachments.Input, len(body.Attachments))
-		for i, a := range body.Attachments {
-			in[i] = attachments.Input{Name: a.Name, Data: a.Data}
-		}
-		decoded, err := attachments.Decode(in)
-		if err != nil {
-			s.writeErr(w, err)
-			return
-		}
-		files = decoded
+	files, err := decodeAttachments(body.Attachments)
+	if err != nil {
+		s.writeErr(w, err)
+		return
 	}
 	key := r.PathValue("key")
 	s.idempotent(w, r, body.RequestID, "POST /api/items/{key}/orchestrator", http.StatusOK, func(ctx context.Context) (any, error) {

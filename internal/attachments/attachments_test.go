@@ -153,16 +153,16 @@ func TestSecondBatchFailureKeepsFirstBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	orig := writeFile
+	orig := WriteFile
 	n := 0
-	writeFile = func(name string, data []byte, perm os.FileMode) error {
+	WriteFile = func(name string, data []byte, perm os.FileMode) error {
 		n++
 		if n == 2 {
 			return errors.New("disk full")
 		}
 		return orig(name, data, perm)
 	}
-	t.Cleanup(func() { writeFile = orig })
+	t.Cleanup(func() { WriteFile = orig })
 	if _, err := Save(home, "SPIKE-1", files); err == nil {
 		t.Fatal("second Save succeeded")
 	}

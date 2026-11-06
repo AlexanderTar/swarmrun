@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/AlexanderTar/swarmrun/internal/attachments"
 	"github.com/AlexanderTar/swarmrun/internal/runtime"
 )
 
@@ -64,18 +63,10 @@ func (s *Server) handoffAgent(w http.ResponseWriter, r *http.Request) {
 		s.writeErr(w, err)
 		return
 	}
-	var files []attachments.File
-	if len(body.Attachments) > 0 {
-		in := make([]attachments.Input, len(body.Attachments))
-		for i, a := range body.Attachments {
-			in[i] = attachments.Input{Name: a.Name, Data: a.Data}
-		}
-		decoded, err := attachments.Decode(in)
-		if err != nil {
-			s.writeErr(w, err)
-			return
-		}
-		files = decoded
+	files, err := decodeAttachments(body.Attachments)
+	if err != nil {
+		s.writeErr(w, err)
+		return
 	}
 	name := r.PathValue("name")
 	a, err := s.RT.Agent(r.Context(), name)

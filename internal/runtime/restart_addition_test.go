@@ -268,6 +268,50 @@ func TestRestartWalkErrorKeepsFilesAndDescription(t *testing.T) {
 	}
 }
 
+func TestRestartReplayWritesNoFiles(t *testing.T) {
+	s, tm, _ := newStore(t)
+	ctx := context.Background()
+	seedEpicWithTask(t, s)
+	orch := stopOrchestrator(t, s, "EPIC-1")
+	tm.startErr = errors.New("tmux refuses to start")
+	files := []attachments.File{{Name: "a.png", Ext: ".png", Body: onePNG}}
+	orig := attachments.WriteFile
+	writes := 0
+	attachments.WriteFile = func(name string, data []byte, perm os.FileMode) error {
+		writes++
+		return orig(name, data, perm)
+	}
+	t.Cleanup(func() { attachments.WriteFile = orig })
+	in := OrchestratorInput{ItemKey: "EPIC-1", Kind: Fake, Model: "fake-1",
+		RequestID: "req-replay-nowrite", Request: "Keep this.", Attachments: files}
+	_, _, err := s.StartOrchestrator(ctx, in)
+	var ie *items.Error
+	if !errors.As(err, &ie) || ie.Code != items.CodeConflict {
+		t.Fatalf("first restart err = %v, want a blocked restart", err)
+	}
+	if writes != 1 {
+		t.Fatalf("first restart writes = %d, want 1", writes)
+	}
+	if batches := restartBatches(s.Home, "EPIC-1"); len(batches) != 1 {
+		t.Fatalf("batches = %v, want 1", batches)
+	}
+	_, _, err = s.StartOrchestrator(ctx, in)
+	if !errors.As(err, &ie) || ie.Code != items.CodeConflict {
+		t.Fatalf("replay err = %v, want the blocked operation again", err)
+	}
+	if writes != 1 {
+		t.Fatalf("replay writes = %d total, want no new writes (1 total)", writes)
+	}
+	if batches := restartBatches(s.Home, "EPIC-1"); len(batches) != 1 {
+		t.Fatalf("batches = %v, want 1", batches)
+	}
+	got, _ := s.AgentByID(ctx, orch.ID)
+	it, _ := s.Items.Get(ctx, "EPIC-1")
+	if strings.Count(got.Brief, "Keep this.") != 1 || strings.Count(it.Brief, "Keep this.") != 1 {
+		t.Fatalf("brief = %q\ndescription = %q, want the request once", got.Brief, it.Brief)
+	}
+}
+
 func TestRetriedBlockedRestartWithSameRequestIDSavesOnce(t *testing.T) {
 	s, tm, _ := newStore(t)
 	ctx := context.Background()

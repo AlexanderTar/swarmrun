@@ -78,8 +78,8 @@ type Batch struct {
 	Files []Saved
 }
 
-// writeFile is the seam a test uses to fail one write of a later batch.
-var writeFile = os.WriteFile
+// WriteFile is the seam a test uses to fail or count writes of a batch.
+var WriteFile = os.WriteFile
 
 var exts = map[string]string{"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
 
@@ -171,7 +171,7 @@ func Save(home, key string, files []File) (batch Batch, err error) {
 			base = "attachment"
 		}
 		p := filepath.Join(dir, fmt.Sprintf("%02d-%s%s", i+1, base, f.Ext))
-		if err = writeFile(p, f.Body, 0o600); err != nil {
+		if err = WriteFile(p, f.Body, 0o600); err != nil {
 			return Batch{}, err
 		}
 		batch.Files = append(batch.Files, Saved{Path: p, Name: f.Name})
