@@ -231,12 +231,12 @@ public struct HandoffRequest: Codable, Sendable, Equatable {          // POST /a
 ```swift
 // DaemonClient.swift — protocol additions (HTTP + Mock)
 func boardItems() async throws -> [BoardItem]                                    // GET /api/items?view=flat
-func startOrchestrator(itemKey: String, _ body: StartOrchestratorBody) async throws -> AgentNode // timeout 60
-func handoff(_ name: String, _ body: HandoffRequest) async throws                // 202, body ignored; timeout 60
+func startOrchestrator(itemKey: String, _ body: StartOrchestratorBody) async throws -> StartedOrchestrator // timeout 60, attachments_failed when files not saved
+func handoff(_ name: String, _ body: HandoffRequest) async throws -> HandoffResult                // 202 with attachments_failed; timeout 60
 ```
 
 `MockDaemonClient`: `boardItemList: [BoardItem]` (fixture `items.json`, optional → `[]`),
-`startResult: Result<AgentNode, DaemonError>?`, `boardItemsError: DaemonError?` (fails only `boardItems()`),
+`startResult: Result<StartedOrchestrator, DaemonError>?`, `handoffResult: Result<HandoffResult, DaemonError>?`, `boardItemsError: DaemonError?` (fails only `boardItems()`),
 recorded `handoffRequests: [HandoffRequest]` / `startBodies: [StartOrchestratorBody]`; records `"items"`, `"start <KEY> <agent> <model>"`,
 `"handoff <name> <agent> <model>"`.
 

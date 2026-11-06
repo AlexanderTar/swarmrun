@@ -72,12 +72,13 @@ type File struct {
     Body []byte
 }
 type Saved struct{ Path, Name string } // Path absolute; Name is the original name
+type Batch struct{ Dir string; Files []Saved } // Dir is that request's own subfolder
 
 // Decode validates count, base64, size and sniffed type. It never touches disk.
 func Decode(in []Input) ([]File, error) // error is *items.Error CodeBadRequest with the copy below
 func Dir(home, key string) string       // <home>/attachments/<key>
-// Save writes NN-<safe-name><ext> (NN = 01..10); a partial write removes the dir.
-func Save(home, key string, files []File) ([]Saved, error)
+// Save writes NN-<safe-name><ext> (NN = 01..10) under its own batch folder and returns Batch; a failure removes only that batch.
+func Save(home, key string, files []File) (Batch, error)
 func BriefSection(saved []Saved) string
 func FailureSection(count int, err error) string
 // Sweep removes <home>/attachments/<key> when the item's root is Done, Cancelled or the item is missing.
@@ -231,7 +232,7 @@ Deleted: nothing.
 ## Amendment 2026-11-06: request and files on restart and handoff
 
 Decision 6 no longer limits attachments to creation from the New orchestrator dialog.
-A restart and a handoff take the same request and files. The two out-of-scope lines
+A fresh start on an existing item, a restart and a handoff take the same request and files. The two out-of-scope lines
 "Adding images after creation" and "Images on items created outside the dialog" are
 removed. Each request's files live in one subfolder under the item, not in one flat folder.
 
