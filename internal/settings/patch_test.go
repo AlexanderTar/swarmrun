@@ -190,3 +190,36 @@ func TestPatchRefusesAMapSettingThatIsNotAnObject(t *testing.T) {
 		t.Fatalf("a refused patch changed the notifications: %+v", again.Notifications)
 	}
 }
+
+// A patch names fields, not whole entries: what an entry leaves out keeps its
+// stored value, or `{"info":{"sound":false}}` would also turn the banner off and
+// `{"advisor":{"model":"none"}}` would store a blank agent the menu bar can't read.
+func TestPatchKeepsTheFieldsAnEntryLeavesOut(t *testing.T) {
+	s := newStore(t, kinds.Claude, kinds.Codex)
+	cur, _ := s.Get(ctx)
+	cur.Roles[kinds.RoleCoder] = RoleDefault{kinds.Codex, "gpt-6-astra", "high", ""}
+	cur.Notifications["info"] = NotifyPref{Center: true, Sound: true}
+	if _, err := s.Put(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	advisor := cur.Roles[kinds.RoleAdvisor].Agent
+	if advisor == "" {
+		t.Fatal("the default advisor has no agent, so this test proves nothing")
+	}
+	_, saved, err := s.Patch(ctx, raw(map[string]string{
+		"notifications": `{"info":{"sound":false}}`,
+		"roles":         `{"coder":{"effort":null},"advisor":{"model":"` + NoAdvisor + `"}}`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (NotifyPref{Center: true}); saved.Notifications["info"] != want {
+		t.Errorf("info = %+v, want %+v", saved.Notifications["info"], want)
+	}
+	if want := (RoleDefault{Agent: kinds.Codex, Model: "gpt-6-astra"}); saved.Roles[kinds.RoleCoder] != want {
+		t.Errorf("coder = %+v, want %+v (null clears one field)", saved.Roles[kinds.RoleCoder], want)
+	}
+	if got := saved.Roles[kinds.RoleAdvisor]; got.Model != NoAdvisor || got.Agent != advisor {
+		t.Errorf("advisor = %+v, want model %q with the stored agent %q", got, NoAdvisor, advisor)
+	}
+}

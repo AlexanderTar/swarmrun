@@ -246,23 +246,24 @@ func (s *Store) Patch(ctx context.Context, fields map[string]json.RawMessage) (p
 	return s.put(ctx, next)
 }
 
-// mergeEntries applies patch to a map setting one entry at a time, as an RFC
-// 7386 merge patch does: an entry it names is replaced, a null one is removed
-// (put refills it with its default), and the others stay as stored instead of
-// going back to their defaults. A patch that isn't an object is returned as it
-// is: null resets the whole setting and the decode in Patch refuses the rest.
+// mergeEntries applies patch to a map setting as an RFC 7386 merge patch does.
+// What it leaves out stays as stored, at every level: an entry it doesn't name
+// doesn't go back to its default, and a field it doesn't name keeps its value. A
+// null removes what it names, and put refills a removed entry with its default.
+// A patch that isn't an object is returned as it is: at the top, null resets the
+// whole setting and the decode in Patch refuses the rest.
 func mergeEntries(stored, patch json.RawMessage) json.RawMessage {
-	var entries map[string]json.RawMessage
-	if err := json.Unmarshal(patch, &entries); err != nil || entries == nil {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(patch, &fields); err != nil || fields == nil {
 		return patch
 	}
 	merged := map[string]json.RawMessage{}
 	json.Unmarshal(stored, &merged)
-	for k, v := range entries {
+	for k, v := range fields {
 		if string(v) == "null" {
 			delete(merged, k)
 		} else {
-			merged[k] = v
+			merged[k] = mergeEntries(merged[k], v)
 		}
 	}
 	out, _ := json.Marshal(merged)
