@@ -405,13 +405,7 @@ const ReviewerRecoveryAddition = "Re-read the review target and the recorded ver
 // it; spawnRunAgent then delivers the full lines as an assignment update.
 const contextTruncated = "(context truncated to fit the brief; the full text arrives as an assignment update: call swarm_sync)"
 
-// RenderBrief renders §9.4. Empty sections are left out. Spec B6: for a
-// workflow spawn (in.Workflow set), a brief that overflows the cap first
-// truncates Context to a single swarm_read pointer, then -- if still over
-// cap -- collapses each unit's steps to its title plus the same pointer. A
-// legacy (non-workflow) spawn never cascades: it just refuses, unchanged
-// (Review Focus 1).
-// renderAddition is the extra section a fresh start appends to a task description.
+// renderAddition is the extra section a fresh start, restart or handoff appends to a task description.
 // Empty when there is no request and no attachments section.
 func renderAddition(request, attachmentsSection string) string {
 	request = strings.TrimSpace(request)
@@ -433,6 +427,29 @@ func renderAddition(request, attachmentsSection string) string {
 	return b.String()
 }
 
+// combineBrief appends addition after current. ok is false when the result
+// would pass items.MaxBrief; current is left as it was.
+func combineBrief(current, addition string) (string, bool) {
+	addition = strings.TrimSpace(addition)
+	if addition == "" {
+		return current, true
+	}
+	next := addition
+	if strings.TrimSpace(current) != "" {
+		next = strings.TrimSpace(current) + "\n\n" + addition
+	}
+	if !items.BriefFits(next) {
+		return current, false
+	}
+	return next, true
+}
+
+// RenderBrief renders §9.4. Empty sections are left out. Spec B6: for a
+// workflow spawn (in.Workflow set), a brief that overflows the cap first
+// truncates Context to a single swarm_read pointer, then -- if still over
+// cap -- collapses each unit's steps to its title plus the same pointer. A
+// legacy (non-workflow) spawn never cascades: it just refuses, unchanged
+// (Review Focus 1).
 func RenderBrief(in BriefInput) (string, error) {
 	if out := renderBriefOnce(in, false, false); items.BriefFits(out) {
 		return out, nil

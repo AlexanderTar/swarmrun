@@ -35,9 +35,9 @@ today **ignores** the agent/model/advisor sent. This change applies them — see
 
 1. Split button: left half is today's `New orchestrator` button unchanged; right half is a chevron `Menu` with exactly one entry, `Orchestrate board item…`.
 2. Row menu gets `Hand off to…` on **top-level orchestrator rows only**, shown when the row's `Handoff` action exists and is enabled. It opens the same window with that orchestrator's item preselected. Existing `Handoff` stays.
-3. The window has no note, repos, name, intent or request fields. Only Item + the Agent/Advisor grid.
+3. The window has no note, repos, name or intent fields. It can carry a request and files, plus Item and the Agent/Advisor grid. (Amended 2026-11-06.)
 4. Picker defaults always come from Settings (`CatalogRules.prefill`), including for handoff (not the orchestrator's current kind).
-5. Ready start reuses `POST /api/items/{key}/orchestrator` with `agent/model/effort/advisor`, **no `roles`** → `role_overrides` NULL → workers use Settings.
+5. Ready start reuses `POST /api/items/{key}/orchestrator` with `agent/model/effort/advisor`, **no `roles`** → `role_overrides` NULL → workers use Settings. Note (2026-11-06): the code later added worker role overrides on start and handoff. This note records that; it changes nothing.
 6. Handoff-with-switch extends the existing handoff route; no new route. The automated handoff walk runs unchanged (pre-pause, HANDOFF notice, predecessor saves its handoff checkpoint, stop, settle, admit); the switch is applied at `PhaseStarting`, immediately before `startSession`.
 7. On switch the agent row gets: new `kind/model/effort`, advisor re-resolved via `resolveAdvisor(newKind, choice)`, `role_overrides = NULL`, `kind_reason = ''` (explicit user choice reads as "settings-equivalent", model.go:111). The window always sends `agent` (no "keep current" option), so a handoff with values identical to the row still applies the switch and clears `role_overrides`.
 8. Switch is orchestrator-only; non-orchestrators get 400.
@@ -371,7 +371,7 @@ Variants: Ready item → primary `Start orchestrator` / `Queue orchestrator` wit
 `This orchestrator can't hand off right now.`, primary disabled · loading → Item popup disabled, primary
 disabled · empty → Item row shows secondary `No board items to orchestrate`, grid still shown, primary
 disabled · load failure → red `Couldn't load board items.` in place of the Item popup, primary `Try again`
-(reruns `load()`). Deliberately absent: note, name, intent, repos, request, images, advisor for non-picker cases.
+(reruns `load()`). Deliberately absent: note, name, intent, repos, advisor for non-picker cases. A request and files are allowed. (Amended 2026-11-06.)
 
 ## All user-facing copy (`Copy.swift`)
 
@@ -436,7 +436,7 @@ Go tests (new, in `handoff_switch_test.go`, harness `newStoreWithFallback` = Cla
 - `TestStartAfterCancelBadPicksIsPreflightError`: bad model → error, no new op row, agent row unchanged.
 httpapi (`handoff_test.go`): 202 with switch; `{"model":"x"}` → 400 `Choose an agent.`; bad model → 422 `preflight_failed`; `"advisor":"none"` accepted.
 
-Swift tests: `BoardHandoffRules.rows` (eligibility incl. chore, excludes in-progress without orchestrator, children, finished orchestrators, story/task; ordering); `detail` for orchestrator (effort fallback via `previewEffortLabel`, nil effort omitted) and Ready; `canHandOff` for queued/spawning/pausing/replacement-reason; form primary labels (Hand off / Start / Queue / Try again), preselect, load failure → `Try again` reruns load, empty list disables primary, request-id reuse; `HTTPDaemonClient` encodes `HandoffRequest` without switch as exactly `{"request_id":…}` and with switch incl. `"advisor":"none"`; `StartOrchestratorBody` has no `roles`/`repos`; render test: closed Item popup is one line high.
+Swift tests: `BoardHandoffRules.rows` (eligibility incl. chore, excludes in-progress without orchestrator, children, finished orchestrators, story/task; ordering); `detail` for orchestrator (effort fallback via `previewEffortLabel`, nil effort omitted) and Ready; `canHandOff` for queued/spawning/pausing/replacement-reason; form primary labels (Hand off / Start / Queue / Try again), preselect, load failure → `Try again` reruns load, empty list disables primary, request-id reuse; `HTTPDaemonClient` encodes a `HandoffRequest` with no extras as exactly `{"request_id":…}`, and the row-action handoff body stays that. Start and handoff may also include `request` and `attachments`. A switch still includes `"advisor":"none"` when chosen. `StartOrchestratorBody` has no `roles`/`repos` in this spec's original tests; render test: closed Item popup is one line high. (Amended 2026-11-06.)
 
 Manual scenarios: (a) Ready epic → Start → row appears with chosen agent; (b) at capacity → Queue orchestrator + caption → agent queued; (c) live Claude orchestrator → Hand off to Codex → row shows `Saving handoff…` → `Starting…` → Codex icon, same name; workers spawned afterwards use Settings roles; (d) Cancel closes, nothing sent; (e) daemon down → primary disabled; (f) pick a model then disable that agent in Settings → 422 text in red, `Try again`; (g) handoff while another handoff runs → 409 text; (h) `Hand off to…` preselects the right item; (i) no eligible items → empty state; (j) exhaust, Ready start of a fresh orchestrator: picked
 agent out of usage → `StartOrchestrator` substitutes the fallback and raises `agent.fallback_used` (existing, agents.go:591-597);

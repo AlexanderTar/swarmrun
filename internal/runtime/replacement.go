@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AlexanderTar/swarmrun/internal/attachments"
 	"github.com/AlexanderTar/swarmrun/internal/db"
 	"github.com/AlexanderTar/swarmrun/internal/events"
 	"github.com/AlexanderTar/swarmrun/internal/ids"
@@ -66,17 +67,18 @@ func isTerminalPhase(p OperationPhase) bool {
 
 // Operation is one durable replacement intent for a canonical agent.
 type Operation struct {
-	ID         string
-	AgentID    string
-	Mode       ReplacementMode
-	Phase      OperationPhase
-	RequestKey string
-	SessionID  string // predecessor session observed when the intent was recorded
-	Generation int
-	Note       string
-	Error      string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID                string
+	AgentID           string
+	Mode              ReplacementMode
+	Phase             OperationPhase
+	RequestKey        string
+	SessionID         string // predecessor session observed when the intent was recorded
+	Generation        int
+	Note              string
+	Error             string
+	AttachmentsFailed bool
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // RequestReplacement records a replacement intent for the canonical agent
@@ -87,7 +89,8 @@ type Operation struct {
 // without running anything again; a different key while one is in flight
 // is a 409 naming the active operation.
 func (s *Store) RequestReplacement(ctx context.Context, agentID string, mode ReplacementMode, requestKey, note string) (Operation, error) {
-	return s.requestReplacement(ctx, agentID, mode, requestKey, note, "")
+	op, _, err := s.requestReplacement(ctx, agentID, replacementInput{Mode: mode, RequestKey: requestKey, Note: note})
+	return op, err
 }
 
 const (
@@ -126,7 +129,122 @@ func (s *Store) RequestHandoffTo(ctx context.Context, agentID, requestKey string
 	if err != nil {
 		return Operation{}, err
 	}
-	return s.requestReplacement(ctx, agentID, ModeHandoff, requestKey, "", string(b))
+	op, _, err := s.requestReplacement(ctx, agentID, replacementInput{Mode: ModeHandoff, RequestKey: requestKey, SwitchJSON: string(b)})
+	return op, err
+}
+
+// HandoffAddition is a handoff that also carries a request and files.
+// Note is ignored when Switch is set, matching a plain switch handoff.
+type HandoffAddition struct {
+	AgentID, RequestKey, Note, Request string
+	Switch                             *AgentSwitch
+	Files                              []attachments.File
+}
+
+// handoffBeforeInFlight runs after a miss on the replay lookup and before the
+// in-flight refusal. Nil outside the parked same-key test.
+var handoffBeforeInFlight func()
+
+// RequestHandoffWithAddition records a handoff and keeps the request and
+// files on the stored brief, the task description and one note. The handler
+// calls it only when a request or files are present; an empty request takes
+// today's handoff path there. A replay returns the stored operation and
+// writes nothing, including after the root is accepted.
+func (s *Store) RequestHandoffWithAddition(ctx context.Context, in HandoffAddition) (Operation, error) {
+	if in.RequestKey != "" {
+		op, err := s.operationByKey(ctx, in.AgentID, in.RequestKey)
+		if err == nil {
+			return op, nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return Operation{}, err
+		}
+	}
+	a, err := s.agentByID(ctx, in.AgentID)
+	if err != nil {
+		return Operation{}, err
+	}
+	if in.Switch != nil && a.State != AgentQueued && a.State != AgentActive {
+		return Operation{}, &items.Error{Code: items.CodeConflict, Message: errSwitchNotLive}
+	}
+	var rootStatus string
+	if err := s.DB.QueryRowContext(ctx, `SELECT status FROM items WHERE id = ?`, a.RootItemID).Scan(&rootStatus); err != nil {
+		return Operation{}, err
+	}
+	if rootStatus == string(items.Done) {
+		return Operation{}, &items.Error{Code: items.CodeConflict, Message: errRootAcceptedHandoff}
+	}
+	if rootStatus == string(items.Cancelled) && len(in.Files) > 0 {
+		return Operation{}, &items.Error{Code: items.CodeConflict, Message: "This item's root is closed."}
+	}
+	if _, err := s.LatestSession(ctx, in.AgentID); err != nil {
+		return Operation{}, &items.Error{Code: items.CodeBadRequest,
+			Message: "This agent has no session to replace yet."}
+	}
+	if handoffBeforeInFlight != nil {
+		handoffBeforeInFlight()
+	}
+	if err := s.refuseIfOperationInFlight(ctx, in.AgentID); err != nil {
+		if in.RequestKey != "" {
+			if op, rerr := s.operationByKey(ctx, in.AgentID, in.RequestKey); rerr == nil {
+				return op, nil
+			}
+		}
+		return Operation{}, err
+	}
+	switchJSON := ""
+	if in.Switch != nil {
+		if err := s.Preflight(ctx, PreflightInput{Kind: in.Switch.Kind, Model: in.Switch.Model, Effort: in.Switch.Effort, Role: RoleOrchestrator}); err != nil {
+			return Operation{}, err
+		}
+		b, err := json.Marshal(in.Switch)
+		if err != nil {
+			return Operation{}, err
+		}
+		switchJSON = string(b)
+	}
+	var batch attachments.Batch
+	committed := false
+	defer func() {
+		if !committed && batch.Dir != "" {
+			os.RemoveAll(batch.Dir)
+		}
+	}()
+	var itemKey string
+	if err := s.DB.QueryRowContext(ctx, `SELECT key FROM items WHERE id = ?`, a.ItemID).Scan(&itemKey); err != nil {
+		return Operation{}, err
+	}
+	section := ""
+	failed := false
+	if len(in.Files) > 0 {
+		saved, err := attachments.Save(s.Home, itemKey, in.Files)
+		if err != nil {
+			failed = true
+			section = attachments.FailureSection(len(in.Files), err)
+		} else {
+			batch = saved
+			section = attachments.BriefSection(batch.Files)
+		}
+	}
+	addition := renderAddition(in.Request, section)
+	note := in.Note
+	if in.Switch != nil {
+		note = ""
+	}
+	op, inserted, err := s.requestReplacement(ctx, in.AgentID, replacementInput{
+		Mode: ModeHandoff, RequestKey: in.RequestKey, Note: note, SwitchJSON: switchJSON,
+		BriefAddition: addition, AttachmentsFailed: failed,
+	})
+	if inserted {
+		committed = true
+		if addition != "" {
+			s.appendTaskDescription(ctx, a.ItemID, addition)
+		}
+	}
+	if err != nil {
+		return Operation{}, err
+	}
+	return op, nil
 }
 
 // applyAgentSwitch applies an operation's pending switch to the agent row
@@ -162,32 +280,45 @@ func (s *Store) applyAgentSwitch(ctx context.Context, opID string, a Agent) (Age
 	return a, nil
 }
 
+// replacementInput is one requestReplacement call. BriefAddition is appended
+// to the stored brief inside the operation transaction; empty leaves the
+// brief and the note unchanged. AttachmentsFailed is stored on the operation
+// when the files could not be saved.
+type replacementInput struct {
+	Mode                         ReplacementMode
+	RequestKey, Note, SwitchJSON string
+	BriefAddition                string
+	AttachmentsFailed            bool
+}
+
 // requestReplacement is RequestReplacement plus an optional pending agent
-// switch (switch_json, "" = none) stored on the operation row.
-func (s *Store) requestReplacement(ctx context.Context, agentID string, mode ReplacementMode, requestKey, note, switchJSON string) (Operation, error) {
+// switch (switch_json, "" = none) stored on the operation row. inserted is
+// false when this call lost the request key to a row that already existed.
+func (s *Store) requestReplacement(ctx context.Context, agentID string, in replacementInput) (Operation, bool, error) {
+	mode, requestKey, note, switchJSON := in.Mode, in.RequestKey, in.Note, in.SwitchJSON
 	switch mode {
 	case ModePause, ModeHandoff, ModeRecover:
 	default:
-		return Operation{}, &items.Error{Code: items.CodeBadRequest,
+		return Operation{}, false, &items.Error{Code: items.CodeBadRequest,
 			Message: "mode must be pause, handoff or recover."}
 	}
 	a, err := s.agentByID(ctx, agentID)
 	if err != nil {
-		return Operation{}, err
+		return Operation{}, false, err
 	}
 	if mode != ModePause {
 		// A successor on an accepted root would never be finished (root-finish R3).
 		done, err := s.rootIsDone(ctx, s.DB, a.RootItemID)
 		if err != nil {
-			return Operation{}, err
+			return Operation{}, false, err
 		}
 		if done {
-			return Operation{}, &items.Error{Code: items.CodeConflict, Message: errRootAcceptedHandoff}
+			return Operation{}, false, &items.Error{Code: items.CodeConflict, Message: errRootAcceptedHandoff}
 		}
 	}
 	ses, err := s.LatestSession(ctx, agentID)
 	if err != nil {
-		return Operation{}, &items.Error{Code: items.CodeBadRequest,
+		return Operation{}, false, &items.Error{Code: items.CodeBadRequest,
 			Message: "This agent has no session to replace yet."}
 	}
 	var op Operation
@@ -212,17 +343,46 @@ func (s *Store) requestReplacement(ctx context.Context, agentID string, mode Rep
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		opNote := note
+		if strings.TrimSpace(in.BriefAddition) != "" {
+			var current string
+			if err := tx.QueryRowContext(ctx, `SELECT brief FROM agents WHERE id = ?`, agentID).Scan(&current); err != nil {
+				return err
+			}
+			next, ok := combineBrief(current, in.BriefAddition)
+			if !ok {
+				return &items.Error{Code: items.CodeBadRequest, Message: items.ErrBriefTooLong}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE agents SET brief = ? WHERE id = ?`, next, agentID); err != nil {
+				return err
+			}
+			opNote = strings.TrimSpace(in.BriefAddition)
+			if strings.TrimSpace(note) != "" {
+				opNote = strings.TrimSpace(note) + "\n\n" + opNote
+			}
+		}
 		now := db.Millis(s.now())
+		failedBit := 0
+		if in.AttachmentsFailed {
+			failedBit = 1
+		}
 		op = Operation{ID: ids.New("op"), AgentID: agentID, Mode: mode, Phase: PhaseRequested,
-			RequestKey: requestKey, SessionID: ses.ID, Generation: ses.Generation, Note: note,
-			CreatedAt: s.now(), UpdatedAt: s.now()}
+			RequestKey: requestKey, SessionID: ses.ID, Generation: ses.Generation, Note: opNote,
+			AttachmentsFailed: in.AttachmentsFailed, CreatedAt: s.now(), UpdatedAt: s.now()}
 		_, err = tx.ExecContext(ctx, `INSERT INTO agent_operations
-			(id, agent_id, mode, phase, request_key, session_id, generation, note, switch_json, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, agent_id, mode, phase, request_key, session_id, generation, note, switch_json, attachments_failed, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			op.ID, op.AgentID, string(op.Mode), string(op.Phase), op.RequestKey,
-			op.SessionID, op.Generation, op.Note, switchJSON, now, now)
+			op.SessionID, op.Generation, op.Note, switchJSON, failedBit, now, now)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+				if requestKey != "" {
+					var n int
+					if qerr := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_operations
+						WHERE agent_id = ? AND request_key = ?`, agentID, requestKey).Scan(&n); qerr == nil && n > 0 {
+						return errDuplicateKey
+					}
+				}
 				return &items.Error{Code: items.CodeConflict,
 					Message: "A replacement is already in progress for this agent."}
 			}
@@ -236,11 +396,13 @@ func (s *Store) requestReplacement(ctx context.Context, agentID string, mode Rep
 	})
 	if err != nil {
 		if errors.Is(err, errDuplicateKey) {
-			return s.operationByKey(ctx, agentID, requestKey)
+			op, err = s.operationByKey(ctx, agentID, requestKey)
+			return op, false, err
 		}
-		return Operation{}, err
+		return Operation{}, false, err
 	}
-	return s.advanceOperation(ctx, op.ID)
+	op, err = s.advanceOperation(ctx, op.ID)
+	return op, true, err
 }
 
 // errDuplicateKey is the private sentinel for "the (agent, request_key)
@@ -253,15 +415,17 @@ func (s *Store) operationByKey(ctx context.Context, agentID, requestKey string) 
 	var op Operation
 	var mode, phase string
 	var created, updated int64
+	var failed int
 	err := s.DB.QueryRowContext(ctx, `SELECT id, agent_id, mode, phase, request_key,
 		COALESCE(session_id, ''), generation, COALESCE(note, ''), COALESCE(error, ''),
-		created_at, updated_at FROM agent_operations WHERE agent_id = ? AND request_key = ?`,
+		attachments_failed, created_at, updated_at FROM agent_operations WHERE agent_id = ? AND request_key = ?`,
 		agentID, requestKey).Scan(&op.ID, &op.AgentID, &mode, &phase, &op.RequestKey,
-		&op.SessionID, &op.Generation, &op.Note, &op.Error, &created, &updated)
+		&op.SessionID, &op.Generation, &op.Note, &op.Error, &failed, &created, &updated)
 	if err != nil {
 		return Operation{}, err
 	}
 	op.Mode, op.Phase = ReplacementMode(mode), OperationPhase(phase)
+	op.AttachmentsFailed = failed != 0
 	op.CreatedAt, op.UpdatedAt = db.FromMillis(created), db.FromMillis(updated)
 	return op, nil
 }
@@ -287,13 +451,14 @@ func (s *Store) pendingOperationTx(ctx context.Context, q txQuerier, agentID str
 	var op Operation
 	var mode, phase string
 	var created, updated int64
+	var failed int
 	err := q.QueryRowContext(ctx, `SELECT id, agent_id, mode, phase, request_key,
 		COALESCE(session_id, ''), generation, COALESCE(note, ''), COALESCE(error, ''),
-		created_at, updated_at FROM agent_operations WHERE agent_id = ? AND phase IN
+		attachments_failed, created_at, updated_at FROM agent_operations WHERE agent_id = ? AND phase IN
 		('requested', 'preserving', 'stopping', 'ready', 'queued', 'starting')
 		ORDER BY updated_at DESC LIMIT 1`, agentID).Scan(
 		&op.ID, &op.AgentID, &mode, &phase, &op.RequestKey,
-		&op.SessionID, &op.Generation, &op.Note, &op.Error, &created, &updated)
+		&op.SessionID, &op.Generation, &op.Note, &op.Error, &failed, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, false, nil
 	}
@@ -301,6 +466,7 @@ func (s *Store) pendingOperationTx(ctx context.Context, q txQuerier, agentID str
 		return Operation{}, false, err
 	}
 	op.Mode, op.Phase = ReplacementMode(mode), OperationPhase(phase)
+	op.AttachmentsFailed = failed != 0
 	op.CreatedAt, op.UpdatedAt = db.FromMillis(created), db.FromMillis(updated)
 	return op, true, nil
 }
@@ -468,11 +634,12 @@ func (s *Store) getOperation(ctx context.Context, opID string) (Operation, error
 	var op Operation
 	var mode, phase string
 	var created, updated int64
+	var failed int
 	err := s.DB.QueryRowContext(ctx, `SELECT id, agent_id, mode, phase, request_key,
 		COALESCE(session_id, ''), generation, COALESCE(note, ''), COALESCE(error, ''),
-		created_at, updated_at FROM agent_operations WHERE id = ?`, opID).Scan(
+		attachments_failed, created_at, updated_at FROM agent_operations WHERE id = ?`, opID).Scan(
 		&op.ID, &op.AgentID, &mode, &phase, &op.RequestKey,
-		&op.SessionID, &op.Generation, &op.Note, &op.Error, &created, &updated)
+		&op.SessionID, &op.Generation, &op.Note, &op.Error, &failed, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, &items.Error{Code: items.CodeNotFound, Message: fmt.Sprintf("No operation %s.", opID)}
 	}
@@ -480,6 +647,7 @@ func (s *Store) getOperation(ctx context.Context, opID string) (Operation, error
 		return Operation{}, err
 	}
 	op.Mode, op.Phase = ReplacementMode(mode), OperationPhase(phase)
+	op.AttachmentsFailed = failed != 0
 	op.CreatedAt, op.UpdatedAt = db.FromMillis(created), db.FromMillis(updated)
 	return op, nil
 }

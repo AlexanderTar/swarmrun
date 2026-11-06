@@ -344,7 +344,8 @@ func (s *Store) StartSpike(ctx context.Context, in SpikeInput) (string, Agent, b
 	// combined brief either way (spec Locked Decision 4/step 3).
 	if len(in.Attachments) > 0 {
 		section := ""
-		if batch, err := attachments.Save(s.Home, it.Key, in.Attachments); err != nil {
+		var batch attachments.Batch
+		if batch, err = attachments.Save(s.Home, it.Key, in.Attachments); err != nil {
 			section = attachments.FailureSection(len(in.Attachments), err)
 			if in.AttachmentsFailed != nil {
 				*in.AttachmentsFailed = true
@@ -354,12 +355,11 @@ func (s *Store) StartSpike(ctx context.Context, in SpikeInput) (string, Agent, b
 		}
 		in.Request = strings.TrimSpace(in.Request + "\n\n" + section)
 		if _, err := s.Items.Update(ctx, it.Key, items.Patch{Brief: &in.Request, Revision: it.Revision}, items.Daemon()); err != nil {
-			// The brief write failed after a successful Save: the files are
-			// now orphaned under a draft item Sweep will never reach (a
-			// failed StartSpike never reopens or closes the item), so clean
-			// up here instead of waiting on a sweep that can't happen.
-			if in.AttachmentsFailed == nil || !*in.AttachmentsFailed {
-				os.RemoveAll(attachments.Dir(s.Home, it.Key))
+			// The brief write failed after a successful Save. Sweep never
+			// reaches a draft StartSpike leaves behind, so drop this request's
+			// batch only; an earlier batch in the item folder stays.
+			if batch.Dir != "" {
+				os.RemoveAll(batch.Dir)
 			}
 			return "", Agent{}, false, err
 		}
@@ -603,7 +603,7 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 		if in.Kind != "" { // picks sent (menubar, web); CLI without --agent sends "" → unchanged
 			sw = &AgentSwitch{Kind: in.Kind, Model: in.Model, Effort: in.Effort, Advisor: in.Advisor}
 		}
-		return s.restartOrchestratorInPlace(ctx, rec, sw, in.RepoPaths)
+		return s.restartOrchestratorInPlace(ctx, rec, sw, in)
 	}
 
 	var existing int
@@ -665,12 +665,10 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 			}
 		}
 		addition = renderAddition(in.Request, section)
-		if addition != "" {
-			if strings.TrimSpace(it.Brief) == "" {
-				objective = addition
-			} else {
-				objective = strings.TrimSpace(it.Brief) + "\n\n" + addition
-			}
+		if strings.TrimSpace(it.Brief) == "" {
+			objective = addition
+		} else {
+			objective = strings.TrimSpace(it.Brief) + "\n\n" + addition
 		}
 	}
 	if addition != "" && !items.BriefFits(objective) {
@@ -725,8 +723,7 @@ func (s *Store) StartOrchestrator(ctx context.Context, in OrchestratorInput) (Ag
 	var queued bool
 	err = s.tx(ctx, func(tx *sql.Tx) error {
 		if addition != "" {
-			brief := objective
-			if _, err := s.Items.UpdateTx(ctx, tx, it.Key, items.Patch{Brief: &brief, Revision: it.Revision}, items.Daemon()); err != nil {
+			if _, err := s.Items.UpdateTx(ctx, tx, it.Key, items.Patch{Brief: &objective, Revision: it.Revision}, items.Daemon()); err != nil {
 				return err
 			}
 		}
@@ -853,14 +850,21 @@ func (s *Store) recoverableOrchestrator(ctx context.Context, it items.Item) (Age
 // operation is resumed by the reconciler. queued reports an operation
 // still waiting (for the old pane to die, or for an admission slot).
 // Picks, when sent, ride the operation as switch_json and apply at start.
-func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *AgentSwitch, repoPaths []string) (Agent, bool, error) {
+func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *AgentSwitch, in OrchestratorInput) (Agent, bool, error) {
+	var batch attachments.Batch
+	committed := false
+	defer func() {
+		if !committed && batch.Dir != "" {
+			os.RemoveAll(batch.Dir)
+		}
+	}()
 	if err := s.refuseIfOperationInFlight(ctx, a.ID); err != nil {
 		return Agent{}, false, err
 	}
 	switchJSON := ""
 	if sw != nil {
 		if err := s.Preflight(ctx, PreflightInput{Kind: sw.Kind, Model: sw.Model, Effort: sw.Effort,
-			Role: RoleOrchestrator, RepoPaths: repoPaths}); err != nil {
+			Role: RoleOrchestrator, RepoPaths: in.RepoPaths}); err != nil {
 			return Agent{}, false, err
 		}
 		b, err := json.Marshal(sw)
@@ -869,7 +873,38 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 		}
 		switchJSON = string(b)
 	}
-	op, err := s.requestReplacement(ctx, a.ID, ModeRecover, "", "", switchJSON)
+	addition := ""
+	failed := false
+	if strings.TrimSpace(in.Request) != "" || len(in.Attachments) > 0 {
+		var itemKey string
+		if err := s.DB.QueryRowContext(ctx, `SELECT key FROM items WHERE id = ?`, a.ItemID).Scan(&itemKey); err != nil {
+			return Agent{}, false, err
+		}
+		section := ""
+		if len(in.Attachments) > 0 {
+			saved, err := attachments.Save(s.Home, itemKey, in.Attachments)
+			if err != nil {
+				failed = true
+				section = attachments.FailureSection(len(in.Attachments), err)
+			} else {
+				batch = saved
+				section = attachments.BriefSection(batch.Files)
+			}
+		}
+		addition = renderAddition(in.Request, section)
+	}
+	op, inserted, err := s.requestReplacement(ctx, a.ID, replacementInput{
+		Mode: ModeRecover, SwitchJSON: switchJSON, BriefAddition: addition, AttachmentsFailed: failed,
+	})
+	if inserted {
+		committed = true
+		if failed && in.AttachmentsFailed != nil {
+			*in.AttachmentsFailed = true
+		}
+		if addition != "" {
+			s.appendTaskDescription(ctx, a.ItemID, addition)
+		}
+	}
 	if err != nil {
 		return Agent{}, false, err
 	}
@@ -882,6 +917,33 @@ func (s *Store) restartOrchestratorInPlace(ctx context.Context, a Agent, sw *Age
 		return Agent{}, false, err
 	}
 	return out, op.Phase != PhaseSucceeded, nil
+}
+
+// appendTaskDescription adds addition to the task description. A failure,
+// including a description that is already at the cap, is logged and does
+// not fail the restart or handoff that already committed.
+func (s *Store) appendTaskDescription(ctx context.Context, itemID, addition string) {
+	if strings.TrimSpace(addition) == "" {
+		return
+	}
+	var key string
+	if err := s.DB.QueryRowContext(ctx, `SELECT key FROM items WHERE id = ?`, itemID).Scan(&key); err != nil {
+		s.logf("orchestrator addition: read item %s: %v", itemID, err)
+		return
+	}
+	it, err := s.Items.Get(ctx, key)
+	if err != nil {
+		s.logf("orchestrator addition: read %s: %v", key, err)
+		return
+	}
+	next, ok := combineBrief(it.Brief, addition)
+	if !ok {
+		s.logf("orchestrator addition: task description %s unchanged: %s", key, items.ErrBriefTooLong)
+		return
+	}
+	if _, err := s.Items.Update(ctx, key, items.Patch{Brief: &next, Revision: it.Revision}, items.Daemon()); err != nil {
+		s.logf("orchestrator addition: task description %s: %v", key, err)
+	}
 }
 
 // roleDefaultKindModel fills an empty Kind/Model from the role's configured

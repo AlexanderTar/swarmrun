@@ -551,6 +551,37 @@ func TestStartOrchestratorOverLengthWithEntriesIs400(t *testing.T) {
 	}
 }
 
+// The description plus the addition still fits 6000 characters, but the
+// rendered kickoff (headers plus that text) does not. That is a 400, the
+// same cap error, and not the plain-render 422.
+func TestStartOrchestratorRenderedBriefOverflowIs400(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	request := "hi"
+	joined := "\n\n## Additional request\n\n" + request
+	original := strings.Repeat("a", items.MaxBrief-len(joined))
+	if _, err := s.DB.ExecContext(bg, `UPDATE items SET brief = ? WHERE key = ?`, original, seed.EpicKey); err != nil {
+		t.Fatal(err)
+	}
+	rec := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", fmt.Sprintf(
+		`{"request_id":"render-cap","agent":"fake","model":"fake-1","request":%q}`, request))
+	if rec.Code != 400 {
+		t.Fatalf("status = %d: %s, want 400", rec.Code, rec.Body)
+	}
+	var body struct {
+		Error struct{ Code, Message string }
+	}
+	json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Error.Code != "bad_request" || body.Error.Message != items.ErrBriefTooLong {
+		t.Fatalf("error = %+v", body.Error)
+	}
+	if orchestratorAgents(t, s, seed.EpicKey) != 0 || batchCount(t, s.RT.Home, seed.EpicKey) != 0 {
+		t.Fatal("a rendered-brief overflow started an orchestrator")
+	}
+	if got := itemBrief(t, s, seed.EpicKey); got != original {
+		t.Fatal("description changed")
+	}
+}
+
 func TestStartOrchestratorOverLengthWithoutEntriesStaysAsToday(t *testing.T) {
 	s, seed := newRuntimeServerWithEpic(t)
 	original := strings.Repeat("b", items.MaxBrief)
@@ -628,6 +659,43 @@ func TestStartOrchestratorSaveFailureReturnsAttachmentsFailedAndReplaysIt(t *tes
 	second := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", body)
 	if second.Body.String() != first.Body.String() || batchCount(t, s.RT.Home, seed.EpicKey) != 0 {
 		t.Fatalf("replay = %s, batches = %d", second.Body, batchCount(t, s.RT.Home, seed.EpicKey))
+	}
+}
+
+func TestRestartSaveFailureReturnsAttachmentsFailedAndReplaysIt(t *testing.T) {
+	s, seed := newRuntimeServerWithEpic(t)
+	started := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator",
+		`{"request_id":"first","agent":"fake","model":"fake-1"}`)
+	if started.Code != 200 {
+		t.Fatalf("start = %d: %s", started.Code, started.Body)
+	}
+	var agent struct{ Name string }
+	json.Unmarshal(started.Body.Bytes(), &agent)
+	if _, err := s.DB.ExecContext(bg, `UPDATE sessions SET state = 'crashed'
+		WHERE id = (SELECT id FROM sessions WHERE agent_id = (SELECT id FROM agents WHERE name = ?)
+		ORDER BY generation DESC, attempt DESC LIMIT 1)`, agent.Name); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.RT.Home, "attachments"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"request_id":"restart-save-fail","agent":"fake","model":"fake-1","request":"Please read the notes.",
+		"attachments":[{"name":"a.png","data":%q}]}`, onePNGBase64)
+	first := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", body)
+	if first.Code != 200 {
+		t.Fatalf("restart = %d: %s", first.Code, first.Body)
+	}
+	var out struct {
+		Name              string `json:"name"`
+		AttachmentsFailed bool   `json:"attachments_failed"`
+	}
+	json.Unmarshal(first.Body.Bytes(), &out)
+	if out.Name != agent.Name || !out.AttachmentsFailed {
+		t.Fatalf("response = %s, want the same orchestrator and attachments_failed", first.Body)
+	}
+	second := s.post(t, "/api/items/"+seed.EpicKey+"/orchestrator", body)
+	if second.Body.String() != first.Body.String() {
+		t.Fatalf("replay = %s, want %s", second.Body, first.Body)
 	}
 }
 

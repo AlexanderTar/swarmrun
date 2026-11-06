@@ -281,6 +281,7 @@ type testTmux struct {
 	panes  []runtime.Pane
 	killed []string
 	keys   []string
+	env    map[string]map[string]string
 }
 
 func (f *testTmux) Start(context.Context, string, string, map[string]string, []string) error {
@@ -299,7 +300,12 @@ func (f *testTmux) Keys(ctx context.Context, name string, keys ...string) error 
 	f.keys = append(f.keys, name)
 	return nil
 }
-func (f *testTmux) Env(context.Context, string, string) (string, error) { return "", nil }
+func (f *testTmux) Env(_ context.Context, name, key string) (string, error) {
+	if f.env == nil {
+		return "", nil
+	}
+	return f.env[name][key], nil
+}
 func (f *testTmux) Kill(ctx context.Context, name string) error {
 	f.killed = append(f.killed, name)
 	return nil
