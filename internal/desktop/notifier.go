@@ -34,6 +34,8 @@ type Notifier struct {
 	Log      func(string, ...any)
 	// Timeout bounds one notify-send; 0 means notifyTimeout.
 	Timeout time.Duration
+	// Retry is the first wait after a failed start; 0 means notifyRetry.
+	Retry time.Duration
 
 	mu     sync.Mutex
 	warned map[string]bool
@@ -47,6 +49,13 @@ const notifyBatch = 500
 // the next notification.
 const notifyTimeout = 10 * time.Second
 
+// notifyRetry and notifyRetryMax are the first and longest waits between
+// attempts to start.
+const (
+	notifyRetry    = time.Second
+	notifyRetryMax = time.Minute
+)
+
 // Run shows notifications until ctx ends. Like the SSE handler it subscribes
 // before reading the cursor and drains once before its first wait, so an
 // event committed between those steps is still shown; notifications from
@@ -54,9 +63,8 @@ const notifyTimeout = 10 * time.Second
 func (n *Notifier) Run(ctx context.Context) {
 	wake, unsubscribe := n.Events.Subscribe()
 	defer unsubscribe()
-	cursor, err := n.Events.Latest(ctx)
-	if err != nil {
-		n.logf("desktop notifications: %v", err)
+	cursor, ok := n.start(ctx)
+	if !ok {
 		return
 	}
 	for {
@@ -66,6 +74,32 @@ func (n *Notifier) Run(ctx context.Context) {
 			return
 		case <-wake:
 		}
+	}
+}
+
+// start reads the cursor, retrying until ctx ends: one failed read (a busy
+// database at boot) must not leave the user without banners until the next
+// restart, since on Linux nothing else says an agent is waiting.
+func (n *Notifier) start(ctx context.Context) (int64, bool) {
+	delay := n.Retry
+	if delay == 0 {
+		delay = notifyRetry
+	}
+	for {
+		cursor, err := n.Events.Latest(ctx)
+		if err == nil {
+			return cursor, true
+		}
+		if ctx.Err() != nil {
+			return 0, false
+		}
+		n.logf("desktop notifications: %v; retrying in %s", err, delay)
+		select {
+		case <-ctx.Done():
+			return 0, false
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, notifyRetryMax)
 	}
 }
 

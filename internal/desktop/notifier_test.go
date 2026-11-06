@@ -23,8 +23,9 @@ type feed struct {
 	evs    []events.Event
 	latest int64
 	wake   chan struct{}
-	read   chan struct{} // closed once Latest has been read
+	read   chan struct{} // closed once Latest has succeeded
 	once   sync.Once
+	fails  int // how many Latest calls fail first
 }
 
 func newFeed() *feed { return &feed{wake: make(chan struct{}, 1), read: make(chan struct{})} }
@@ -34,6 +35,10 @@ func (f *feed) Subscribe() (<-chan struct{}, func()) { return f.wake, func() {} 
 func (f *feed) Latest(context.Context) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.fails > 0 {
+		f.fails--
+		return 0, errors.New("database is locked")
+	}
 	defer f.once.Do(func() { close(f.read) })
 	return f.latest, nil
 }
@@ -305,4 +310,43 @@ func waitLog(t *testing.T, e *notifierEnv, want string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	t.Fatalf("never logged %q", want)
+}
+
+// A busy database at boot must not switch banners off until the next restart:
+// on Linux nothing else tells the user an agent is waiting.
+func TestNotifierRetriesAFailedStart(t *testing.T) {
+	e := newNotifierEnv(t)
+	e.feed.fails = 2
+	e.n.Retry = time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); e.n.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-stopped })
+	select {
+	case <-e.feed.read:
+	case <-stopped:
+		t.Fatal("the notifier gave up after a failed start")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the notifier never retried")
+	}
+	e.feed.add(events.NotificationCreated, notification("info", "Still on", "x"), false)
+	waitSends(t, e, 1)
+	waitLog(t, e, "database is locked")
+}
+
+func TestNotifierStopsRetryingWhenItsContextEnds(t *testing.T) {
+	e := newNotifierEnv(t)
+	e.feed.fails = 1 << 30
+	e.n.Retry = time.Hour
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopped := make(chan struct{})
+	go func() { defer close(stopped); e.n.Run(ctx) }()
+	waitLog(t, e, "database is locked")
+	cancel()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the notifier kept retrying after its context ended")
+	}
 }
