@@ -212,8 +212,9 @@ func (s *Store) PutChange(ctx context.Context, next Settings) (prev, saved Setti
 // every other one as stored, validating the result like Put. It reads,
 // merges and writes under the lock Put takes, so it never overwrites a
 // concurrent change to another setting (swarm settings set, with no menu bar
-// to edit them on Linux). low_token_mode stays with POST /api/low-token, as
-// in Put. Like PutChange it also returns the settings it replaced.
+// to edit them on Linux). roles and notifications are merged entry by entry
+// (mergeEntries). low_token_mode stays with POST /api/low-token, as in Put.
+// Like PutChange it also returns the settings it replaced.
 func (s *Store) Patch(ctx context.Context, fields map[string]json.RawMessage) (prev, saved Settings, err error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -228,6 +229,9 @@ func (s *Store) Patch(ctx context.Context, fields map[string]json.RawMessage) (p
 		if _, ok := doc[k]; !ok || k == "low_token_mode" {
 			return cur, cur, invalid("%s isn't a setting that can be changed here.", k)
 		}
+		if k == "roles" || k == "notifications" {
+			v = mergeEntries(doc[k], v)
+		}
 		doc[k] = v
 	}
 	merged, _ := json.Marshal(doc)
@@ -240,6 +244,29 @@ func (s *Store) Patch(ctx context.Context, fields map[string]json.RawMessage) (p
 		return cur, cur, invalid("Invalid value: %v", err)
 	}
 	return s.put(ctx, next)
+}
+
+// mergeEntries applies patch to a map setting one entry at a time, as an RFC
+// 7386 merge patch does: an entry it names is replaced, a null one is removed
+// (put refills it with its default), and the others stay as stored instead of
+// going back to their defaults. A patch that isn't an object is returned as it
+// is: null resets the whole setting and the decode in Patch refuses the rest.
+func mergeEntries(stored, patch json.RawMessage) json.RawMessage {
+	var entries map[string]json.RawMessage
+	if err := json.Unmarshal(patch, &entries); err != nil || entries == nil {
+		return patch
+	}
+	merged := map[string]json.RawMessage{}
+	json.Unmarshal(stored, &merged)
+	for k, v := range entries {
+		if string(v) == "null" {
+			delete(merged, k)
+		} else {
+			merged[k] = v
+		}
+	}
+	out, _ := json.Marshal(merged)
+	return out
 }
 
 // put validates next and writes the settings that differ from the stored

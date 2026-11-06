@@ -124,3 +124,69 @@ func TestPatchKeepsInstructionsSavedWhileItRuns(t *testing.T) {
 		t.Errorf("last event = %s %s (%v)", last.Type, last.Payload, err)
 	}
 }
+
+func TestPatchChangesOnlyTheNamedEntriesOfAMapSetting(t *testing.T) {
+	s := newStore(t, kinds.Claude, kinds.Codex)
+	cur, _ := s.Get(ctx)
+	reviewer := RoleDefault{kinds.Codex, "gpt-6-astra", "high", ""}
+	cur.Roles[kinds.RoleReviewer] = reviewer
+	cur.Notifications["info"] = NotifyPref{}
+	if _, err := s.Put(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	_, saved, err := s.Patch(ctx, raw(map[string]string{
+		"roles":         `{"coder":{"agent":"codex","model":"gpt-6-astra","effort":"high"}}`,
+		"notifications": `{"action":{"center":true,"sound":false}}`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (RoleDefault{kinds.Codex, "gpt-6-astra", "high", ""}); saved.Roles[kinds.RoleCoder] != want {
+		t.Errorf("coder = %+v, want %+v", saved.Roles[kinds.RoleCoder], want)
+	}
+	if saved.Roles[kinds.RoleReviewer] != reviewer {
+		t.Errorf("reviewer = %+v, want the stored %+v", saved.Roles[kinds.RoleReviewer], reviewer)
+	}
+	if want := (NotifyPref{Center: true}); saved.Notifications["action"] != want {
+		t.Errorf("action = %+v, want %+v", saved.Notifications["action"], want)
+	}
+	if saved.Notifications["info"] != (NotifyPref{}) {
+		t.Errorf("info = %+v, want the stored off", saved.Notifications["info"])
+	}
+}
+
+func TestPatchNullResetsAMapEntryOrTheWholeSetting(t *testing.T) {
+	s := newStore(t, kinds.Claude, kinds.Codex)
+	def := Defaults(nil)
+	custom := RoleDefault{kinds.Codex, "gpt-6-astra", "high", ""}
+	cur, _ := s.Get(ctx)
+	cur.Roles[kinds.RoleCoder], cur.Roles[kinds.RoleReviewer] = custom, custom
+	if _, err := s.Put(ctx, cur); err != nil {
+		t.Fatal(err)
+	}
+	_, saved, err := s.Patch(ctx, raw(map[string]string{"roles": `{"reviewer":null}`}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Roles[kinds.RoleReviewer] != def.Roles[kinds.RoleReviewer] || saved.Roles[kinds.RoleCoder] != custom {
+		t.Fatalf("reviewer = %+v, coder = %+v, want the default and the stored", saved.Roles[kinds.RoleReviewer], saved.Roles[kinds.RoleCoder])
+	}
+	_, saved, err = s.Patch(ctx, raw(map[string]string{"roles": `null`}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Roles[kinds.RoleCoder] != def.Roles[kinds.RoleCoder] {
+		t.Fatalf("coder = %+v, want the default after a null setting", saved.Roles[kinds.RoleCoder])
+	}
+}
+
+func TestPatchRefusesAMapSettingThatIsNotAnObject(t *testing.T) {
+	s := newStore(t, kinds.Claude, kinds.Codex)
+	before, _ := s.Get(ctx)
+	if _, _, err := s.Patch(ctx, raw(map[string]string{"notifications": `5`})); err == nil {
+		t.Fatal("a number replaced the notifications")
+	}
+	if again, _ := s.Get(ctx); again.Notifications["info"] != before.Notifications["info"] {
+		t.Fatalf("a refused patch changed the notifications: %+v", again.Notifications)
+	}
+}
