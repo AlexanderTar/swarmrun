@@ -20,7 +20,8 @@ import (
 //
 // avahi-daemon answers for both while the processes live and withdraws them
 // when they die, so stopping the processes is the cleanup. avahi-publish
-// reports on stderr, so its starter merges stderr into the stream read here.
+// reports on stderr, so its starter merges stderr into the stream read here,
+// and runs it in the C locale, since that stream is matched as English text.
 type Avahi struct {
 	StartProc execx.Starter                        // nil means execx.StartMerged
 	After     func(time.Duration) <-chan time.Time // nil means time.After

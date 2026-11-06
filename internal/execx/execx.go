@@ -105,12 +105,15 @@ func Start(ctx context.Context, name string, args ...string) (*Proc, error) {
 }
 
 // StartMerged is Start with the process's stderr merged into Stdout, for a
-// program that reports on stderr (avahi-publish).
+// program that reports on stderr (avahi-publish). It runs in the C locale: the
+// caller parses those reports, and a translated system would change them.
 func StartMerged(ctx context.Context, name string, args ...string) (*Proc, error) {
 	if err := refuseUnderTest(name); err != nil {
 		return nil, err
 	}
-	return startCmd(exec.CommandContext(ctx, name, args...), true)
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	return startCmd(cmd, true)
 }
 
 // StarterEnv is Starter with an extra environment map merged over the
