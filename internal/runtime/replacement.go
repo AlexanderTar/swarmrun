@@ -87,7 +87,8 @@ type Operation struct {
 // without running anything again; a different key while one is in flight
 // is a 409 naming the active operation.
 func (s *Store) RequestReplacement(ctx context.Context, agentID string, mode ReplacementMode, requestKey, note string) (Operation, error) {
-	return s.requestReplacement(ctx, agentID, mode, requestKey, note, "")
+	op, _, err := s.requestReplacement(ctx, agentID, replacementInput{Mode: mode, RequestKey: requestKey, Note: note})
+	return op, err
 }
 
 const (
@@ -126,7 +127,8 @@ func (s *Store) RequestHandoffTo(ctx context.Context, agentID, requestKey string
 	if err != nil {
 		return Operation{}, err
 	}
-	return s.requestReplacement(ctx, agentID, ModeHandoff, requestKey, "", string(b))
+	op, _, err := s.requestReplacement(ctx, agentID, replacementInput{Mode: ModeHandoff, RequestKey: requestKey, SwitchJSON: string(b)})
+	return op, err
 }
 
 // applyAgentSwitch applies an operation's pending switch to the agent row
@@ -162,32 +164,45 @@ func (s *Store) applyAgentSwitch(ctx context.Context, opID string, a Agent) (Age
 	return a, nil
 }
 
+// replacementInput is one requestReplacement call. BriefAddition is appended
+// to the stored brief inside the operation transaction; empty leaves the
+// brief and the note unchanged. AttachmentsFailed is stored on the operation
+// when the files could not be saved.
+type replacementInput struct {
+	Mode                         ReplacementMode
+	RequestKey, Note, SwitchJSON string
+	BriefAddition                string
+	AttachmentsFailed            bool
+}
+
 // requestReplacement is RequestReplacement plus an optional pending agent
-// switch (switch_json, "" = none) stored on the operation row.
-func (s *Store) requestReplacement(ctx context.Context, agentID string, mode ReplacementMode, requestKey, note, switchJSON string) (Operation, error) {
+// switch (switch_json, "" = none) stored on the operation row. inserted is
+// false when this call lost the request key to a row that already existed.
+func (s *Store) requestReplacement(ctx context.Context, agentID string, in replacementInput) (Operation, bool, error) {
+	mode, requestKey, note, switchJSON := in.Mode, in.RequestKey, in.Note, in.SwitchJSON
 	switch mode {
 	case ModePause, ModeHandoff, ModeRecover:
 	default:
-		return Operation{}, &items.Error{Code: items.CodeBadRequest,
+		return Operation{}, false, &items.Error{Code: items.CodeBadRequest,
 			Message: "mode must be pause, handoff or recover."}
 	}
 	a, err := s.agentByID(ctx, agentID)
 	if err != nil {
-		return Operation{}, err
+		return Operation{}, false, err
 	}
 	if mode != ModePause {
 		// A successor on an accepted root would never be finished (root-finish R3).
 		done, err := s.rootIsDone(ctx, s.DB, a.RootItemID)
 		if err != nil {
-			return Operation{}, err
+			return Operation{}, false, err
 		}
 		if done {
-			return Operation{}, &items.Error{Code: items.CodeConflict, Message: errRootAcceptedHandoff}
+			return Operation{}, false, &items.Error{Code: items.CodeConflict, Message: errRootAcceptedHandoff}
 		}
 	}
 	ses, err := s.LatestSession(ctx, agentID)
 	if err != nil {
-		return Operation{}, &items.Error{Code: items.CodeBadRequest,
+		return Operation{}, false, &items.Error{Code: items.CodeBadRequest,
 			Message: "This agent has no session to replace yet."}
 	}
 	var op Operation
@@ -212,9 +227,27 @@ func (s *Store) requestReplacement(ctx context.Context, agentID string, mode Rep
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		opNote := note
+		if strings.TrimSpace(in.BriefAddition) != "" {
+			var current string
+			if err := tx.QueryRowContext(ctx, `SELECT brief FROM agents WHERE id = ?`, agentID).Scan(&current); err != nil {
+				return err
+			}
+			next, ok := combineBrief(current, in.BriefAddition)
+			if !ok {
+				return &items.Error{Code: items.CodeBadRequest, Message: items.ErrBriefTooLong}
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE agents SET brief = ? WHERE id = ?`, next, agentID); err != nil {
+				return err
+			}
+			opNote = strings.TrimSpace(in.BriefAddition)
+			if strings.TrimSpace(note) != "" {
+				opNote = strings.TrimSpace(note) + "\n\n" + opNote
+			}
+		}
 		now := db.Millis(s.now())
 		op = Operation{ID: ids.New("op"), AgentID: agentID, Mode: mode, Phase: PhaseRequested,
-			RequestKey: requestKey, SessionID: ses.ID, Generation: ses.Generation, Note: note,
+			RequestKey: requestKey, SessionID: ses.ID, Generation: ses.Generation, Note: opNote,
 			CreatedAt: s.now(), UpdatedAt: s.now()}
 		_, err = tx.ExecContext(ctx, `INSERT INTO agent_operations
 			(id, agent_id, mode, phase, request_key, session_id, generation, note, switch_json, created_at, updated_at)
@@ -236,11 +269,13 @@ func (s *Store) requestReplacement(ctx context.Context, agentID string, mode Rep
 	})
 	if err != nil {
 		if errors.Is(err, errDuplicateKey) {
-			return s.operationByKey(ctx, agentID, requestKey)
+			op, err = s.operationByKey(ctx, agentID, requestKey)
+			return op, false, err
 		}
-		return Operation{}, err
+		return Operation{}, false, err
 	}
-	return s.advanceOperation(ctx, op.ID)
+	op, err = s.advanceOperation(ctx, op.ID)
+	return op, true, err
 }
 
 // errDuplicateKey is the private sentinel for "the (agent, request_key)
