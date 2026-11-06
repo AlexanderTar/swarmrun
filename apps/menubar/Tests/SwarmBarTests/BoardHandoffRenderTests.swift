@@ -257,6 +257,83 @@ final class BoardHandoffRenderTests: XCTestCase {
         XCTAssertTrue(text.contains(Copy.workerOverrides), "OCR sanity: \(text)")
         XCTAssertFalse(text.contains("Defaults from Settings"), text)
     }
+
+    // MARK: request field and files strip (unit 3)
+
+    private func handoffForm(selectedKey: String) async throws -> BoardHandoffForm {
+        let client = try MockDaemonClient(fixtures: Fixture.dir)
+        let model = makeAppModel(client)
+        await model.refresh()
+        let form = model.makeBoardHandoffForm()
+        await form.load()
+        form.selectedKey = selectedKey
+        return form
+    }
+
+    private func contentHost(_ form: BoardHandoffForm, height: CGFloat, maxFormHeight: CGFloat? = nil) -> NSHostingView<BoardHandoffView> {
+        let view = maxFormHeight.map { BoardHandoffView(form: form, onDone: {}, onCancel: {}, maxFormHeight: $0) }
+            ?? BoardHandoffView(form: form, onDone: {}, onCancel: {})
+        let host = NSHostingView(rootView: view)
+        host.frame = NSRect(x: 0, y: 0, width: 820, height: height)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+        return host
+    }
+
+    private func subviews(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(subviews) }
+
+    /// The request editor's scroll view: its document is the paste text view.
+    private func editorScrolls(_ host: NSView) -> [NSScrollView] {
+        subviews(host).compactMap { $0 as? NSScrollView }.filter { $0.documentView is ImagePasteTextView }
+    }
+
+    /// The form's own scroll view: it carries the worker grid's popups.
+    private func formScrolls(_ host: NSView) -> [NSScrollView] {
+        subviews(host).compactMap { $0 as? NSScrollView }.filter { scroll in subviews(scroll).contains { $0 is NSPopUpButton } }
+    }
+
+    func testRequestFieldPresentInStartAndHandoffModes() async throws {
+        for key in ["BUG-7", "EPIC-12"] {
+            let form = try await handoffForm(selectedKey: key)
+            let text = try ocrText(contentHost(form, height: 1000))
+            XCTAssertTrue(text.contains("Additional request (optional)"), "\(key): \(text)")
+        }
+    }
+
+    func testRequestEditorHeightIs120() async throws {
+        XCTAssertEqual(BoardHandoffView.requestFieldHeight, 120, "the field's fixed height")
+        let form = try await handoffForm(selectedKey: "BUG-7")
+        let host = contentHost(form, height: 1000)
+        let editor = try XCTUnwrap(editorScrolls(host).first, "request editor present")
+        // The field is the scroll view plus RequestEditor's own 12pt vertical padding.
+        XCTAssertEqual(editor.frame.height, BoardHandoffView.requestFieldHeight - 12, accuracy: 1)
+    }
+
+    func testWindowHeightStaysFixedWithEmptyStrip() async throws {
+        let form = try await handoffForm(selectedKey: "BUG-7")
+        // Far more room than the content wants (with no height limit to hide
+        // behind) still leaves the editor at its fixed height, and far less
+        // room does not compress it: the window's minimum and maximum heights
+        // are both the content height.
+        let tall = contentHost(form, height: 5000, maxFormHeight: 5000)
+        let tallEditor = try XCTUnwrap(editorScrolls(tall).first, "request editor present when tall")
+        XCTAssertEqual(tallEditor.frame.height, BoardHandoffView.requestFieldHeight - 12, accuracy: 1,
+                       "editor stays fixed when tall")
+        let short = contentHost(form, height: 120)
+        let shortEditor = try XCTUnwrap(editorScrolls(short).first, "request editor present when short")
+        XCTAssertEqual(shortEditor.frame.height, BoardHandoffView.requestFieldHeight - 12, accuracy: 1,
+                       "editor stays fixed when short")
+    }
+
+    func testLowMaxFormHeightCapsWindowAndScrolls() async throws {
+        let form = try await handoffForm(selectedKey: "BUG-7")
+        let uncapped = contentHost(form, height: 1200).fittingSize.height
+        let host = contentHost(form, height: 1200, maxFormHeight: 200)
+        let capped = host.fittingSize.height
+        XCTAssertLessThan(capped, uncapped, "the window stops at the height limit")
+        let scroll = try XCTUnwrap(formScrolls(host).first, "the form scrolls under a low limit")
+        XCTAssertEqual(scroll.frame.height, 200, accuracy: 1)
+    }
 }
 
 /// Offscreen SwiftUI buttons expose no measurable NSButton or accessibility frame, so the contract is pinned at

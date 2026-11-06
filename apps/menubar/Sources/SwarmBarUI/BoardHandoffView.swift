@@ -7,38 +7,64 @@ public struct BoardHandoffView: View {
     @Bindable var form: BoardHandoffForm
     let onDone: () -> Void
     let onCancel: () -> Void
+    /// The form takes its content's height up to this limit, then scrolls.
+    let maxFormHeight: CGFloat
 
-    public init(form: BoardHandoffForm, onDone: @escaping () -> Void, onCancel: @escaping () -> Void) {
+    public init(form: BoardHandoffForm, onDone: @escaping () -> Void, onCancel: @escaping () -> Void,
+                maxFormHeight: CGFloat = Self.defaultMaxFormHeight) {
         self.form = form
         self.onDone = onDone
         self.onCancel = onCancel
+        self.maxFormHeight = maxFormHeight
+    }
+
+    /// The request field's fixed height: it scrolls inside itself past this.
+    static let requestFieldHeight: CGFloat = 120
+
+    /// Room the window chrome needs beyond the scrolling form: title bar plus footer.
+    public static let windowChromeHeight: CGFloat = 96
+
+    public static var defaultMaxFormHeight: CGFloat {
+        (NSScreen.main?.visibleFrame.height ?? 800) - windowChromeHeight
     }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                if let failure = form.failure {
-                    Text("⚠ \(failure)").font(.callout).foregroundStyle(.red)
-                }
-                HStack {
-                    Text(Copy.item).frame(width: 70, alignment: .leading)
-                    if form.loadError != nil {
-                        Text(Copy.boardItemsLoadFailed).foregroundStyle(.red)
-                    } else if !form.loading && form.rows.isEmpty {
-                        Text(Copy.noBoardItems).foregroundStyle(.secondary)
-                    } else {
-                        WideOptionPicker(Copy.item,
-                                         options: form.rows.map { PickerOption($0.id, BoardHandoffRules.title($0)) },
-                                         value: form.selectedKey ?? "",
-                                         detail: { opt in form.rows.first { $0.id == opt.value }.map(detailLine) }) { form.selectedKey = $0 }
-                            .frame(maxWidth: .infinity)
-                            .disabled(form.loading)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let failure = form.failure {
+                        Text("⚠ \(failure)").font(.callout).foregroundStyle(.red)
+                    }
+                    HStack {
+                        Text(Copy.item).frame(width: 70, alignment: .leading)
+                        if form.loadError != nil {
+                            Text(Copy.boardItemsLoadFailed).foregroundStyle(.red)
+                        } else if !form.loading && form.rows.isEmpty {
+                            Text(Copy.noBoardItems).foregroundStyle(.secondary)
+                        } else {
+                            WideOptionPicker(Copy.item,
+                                             options: form.rows.map { PickerOption($0.id, BoardHandoffRules.title($0)) },
+                                             value: form.selectedKey ?? "",
+                                             detail: { opt in form.rows.first { $0.id == opt.value }.map(detailLine) }) { form.selectedKey = $0 }
+                                .frame(maxWidth: .infinity)
+                                .disabled(form.loading)
+                        }
+                    }
+                    AgentPickerGrid(picker: form.picker)
+                    WorkerOverridesGrid(form: form)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(Copy.additionalRequestOptional)
+                        RequestEditor(text: $form.request, onImageData: { form.attachments.addImage(data: $0, name: $1) },
+                                      onImageURLs: { form.attachments.addImages(from: $0) })
+                            .frame(height: Self.requestFieldHeight)
+                        RequestImageStrip(model: form.attachments)
                     }
                 }
-                AgentPickerGrid(picker: form.picker)
-                WorkerOverridesGrid(form: form)
+                .padding(.horizontal, 22).padding(.vertical, 12)
+                .background(SubtleScrollerConfig())
             }
-            .padding(.horizontal, 22).padding(.vertical, 12)
+            .frame(maxHeight: maxFormHeight)
+            .scrollIndicators(.automatic)
             Divider()
             HStack {
                 if let caption = form.caption { Text(caption).font(.caption).foregroundStyle(.secondary) }

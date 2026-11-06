@@ -123,6 +123,7 @@ public enum Copy {
     public static let advisorEffort = "Advisor Effort"
     public static let workerOverrides = "Worker overrides"
     public static let requestOptional = "Request (optional)"
+    public static let additionalRequestOptional = "Additional request (optional)"
     public static let startOrchestrator = "Start orchestrator"
     public static let queueOrchestrator = "Queue orchestrator"
     public static let tryAgain = "Try again"
