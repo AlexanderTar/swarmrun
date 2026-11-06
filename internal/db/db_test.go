@@ -195,6 +195,10 @@ func TestExistingDatabaseGainsColumnsAddedByLaterMigrations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// 0036_operation_attachments_failed.sql adds this with a plain ALTER TABLE.
+	if _, err := raw.Exec(`ALTER TABLE agent_operations DROP COLUMN attachments_failed`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := raw.Exec(`ALTER TABLE sessions DROP COLUMN first_sync_at`); err != nil {
 		t.Fatal(err)
 	}

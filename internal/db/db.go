@@ -16,7 +16,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const SchemaVersion = 35
+const SchemaVersion = 36
 
 var (
 	ErrLegacy = errors.New("Swarm 1.x data found. Run `swarm migrate` first.")

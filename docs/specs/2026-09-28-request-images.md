@@ -18,8 +18,9 @@ Affected repo: agent-swarm only. There is no collision with other in-flight work
 ## Locked decisions
 
 1. **Storage:** central store at `<SWARM_HOME>/attachments/<ITEM-KEY>/`, with the directory
-   at mode `0700` and each file at `0600`. The directory is the source of truth: no DB table,
-   no migration.
+   at mode `0700` and each file at `0600`. Each request's files go in their own subfolder,
+   `attachments/<ITEM-KEY>/<batch>/NN-name.ext`, not loose in the item folder. The directory
+   is the source of truth: no DB table for the files themselves.
 2. **Delivery:** the item brief gets an "Attachments" section listing absolute paths. The
    images are not copied into worktrees and not inlined into prompts.
 3. **Cleanup:** a daemon sweep (on startup and every 10 minutes) deletes a key's folder once
@@ -32,7 +33,8 @@ Affected repo: agent-swarm only. There is no collision with other in-flight work
 5. **Limits:** at most 10 images, each at most 10 MiB decoded. The daemon accepts PNG, JPEG,
    GIF and WebP, sniffed from the bytes with `http.DetectContentType`; the client's claim is
    ignored. The client converts HEIC, TIFF and pasted clipboard images to PNG before sending.
-6. **Scope:** attachments only at creation, and only from the New orchestrator dialog.
+6. **Scope:** a request and its files can be attached when an orchestrator is created, restarted,
+   or handed off, not only from the New orchestrator dialog. (Amended 2026-11-06.)
 7. **Agent kinds:** all five get the paths. Claude (Read) and Codex (`view_image`) view images.
    agy, Cursor and Muse are probed during implementation. The result for each goes into the
    `attachments` package doc, and a kind that can't view images still gets the paths.
@@ -171,7 +173,7 @@ Brief section (`BriefSection`):
 
 The user attached these images to the request. Open each one with your file or image tool before you plan, and pass the paths that matter to children in their briefs.
 
-- /Users/…/.swarm/attachments/SPIKE-12/01-login-bug.png (Login bug.png)
+- /Users/…/.swarm/attachments/SPIKE-12/batch-…/01-login-bug.png (Login bug.png)
 ```
 
 `FailureSection`:
@@ -222,11 +224,16 @@ Deleted: nothing.
 
 ## Explicitly out of scope
 
-- Adding images after creation (board, `swarm_send`, CLI).
-- Images on items created outside the dialog.
 - Copying images into worktrees or git.
 - Non-image files (PDF, logs).
 - Reopened items getting their images back.
+
+## Amendment 2026-11-06: request and files on restart and handoff
+
+Decision 6 no longer limits attachments to creation from the New orchestrator dialog.
+A restart and a handoff take the same request and files. The two out-of-scope lines
+"Adding images after creation" and "Images on items created outside the dialog" are
+removed. Each request's files live in one subfolder under the item, not in one flat folder.
 
 ## Amendment 2026-10-14: arbitrary file attachments
 

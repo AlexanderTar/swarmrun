@@ -25,12 +25,16 @@ type replacementWire struct {
 	// limit started (runtime.OperationReason); omitted otherwise.
 	Reason string `json:"reason,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// AttachmentsFailed is set when the request's files could not be saved.
+	// Omitted when false, including every handoff that carried no files.
+	AttachmentsFailed bool `json:"attachments_failed,omitempty"`
 }
 
 func replacementOut(name string, op runtime.Operation) replacementWire {
 	return replacementWire{OperationID: op.ID, Agent: name, Mode: string(op.Mode),
 		Phase: string(op.Phase), RequestKey: op.RequestKey,
-		Reason: runtime.OperationReason(op.RequestKey), Error: op.Error}
+		Reason: runtime.OperationReason(op.RequestKey), Error: op.Error,
+		AttachmentsFailed: op.AttachmentsFailed}
 }
 
 // handoffBody: agent set → the successor runs as that agent/model/effort/

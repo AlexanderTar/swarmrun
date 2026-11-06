@@ -67,17 +67,18 @@ func isTerminalPhase(p OperationPhase) bool {
 
 // Operation is one durable replacement intent for a canonical agent.
 type Operation struct {
-	ID         string
-	AgentID    string
-	Mode       ReplacementMode
-	Phase      OperationPhase
-	RequestKey string
-	SessionID  string // predecessor session observed when the intent was recorded
-	Generation int
-	Note       string
-	Error      string
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID                string
+	AgentID           string
+	Mode              ReplacementMode
+	Phase             OperationPhase
+	RequestKey        string
+	SessionID         string // predecessor session observed when the intent was recorded
+	Generation        int
+	Note              string
+	Error             string
+	AttachmentsFailed bool
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // RequestReplacement records a replacement intent for the canonical agent
@@ -359,14 +360,18 @@ func (s *Store) requestReplacement(ctx context.Context, agentID string, in repla
 			}
 		}
 		now := db.Millis(s.now())
+		failedBit := 0
+		if in.AttachmentsFailed {
+			failedBit = 1
+		}
 		op = Operation{ID: ids.New("op"), AgentID: agentID, Mode: mode, Phase: PhaseRequested,
 			RequestKey: requestKey, SessionID: ses.ID, Generation: ses.Generation, Note: opNote,
-			CreatedAt: s.now(), UpdatedAt: s.now()}
+			AttachmentsFailed: in.AttachmentsFailed, CreatedAt: s.now(), UpdatedAt: s.now()}
 		_, err = tx.ExecContext(ctx, `INSERT INTO agent_operations
-			(id, agent_id, mode, phase, request_key, session_id, generation, note, switch_json, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(id, agent_id, mode, phase, request_key, session_id, generation, note, switch_json, attachments_failed, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			op.ID, op.AgentID, string(op.Mode), string(op.Phase), op.RequestKey,
-			op.SessionID, op.Generation, op.Note, switchJSON, now, now)
+			op.SessionID, op.Generation, op.Note, switchJSON, failedBit, now, now)
 		if err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint failed") {
 				if requestKey != "" {
@@ -408,15 +413,17 @@ func (s *Store) operationByKey(ctx context.Context, agentID, requestKey string) 
 	var op Operation
 	var mode, phase string
 	var created, updated int64
+	var failed int
 	err := s.DB.QueryRowContext(ctx, `SELECT id, agent_id, mode, phase, request_key,
 		COALESCE(session_id, ''), generation, COALESCE(note, ''), COALESCE(error, ''),
-		created_at, updated_at FROM agent_operations WHERE agent_id = ? AND request_key = ?`,
+		attachments_failed, created_at, updated_at FROM agent_operations WHERE agent_id = ? AND request_key = ?`,
 		agentID, requestKey).Scan(&op.ID, &op.AgentID, &mode, &phase, &op.RequestKey,
-		&op.SessionID, &op.Generation, &op.Note, &op.Error, &created, &updated)
+		&op.SessionID, &op.Generation, &op.Note, &op.Error, &failed, &created, &updated)
 	if err != nil {
 		return Operation{}, err
 	}
 	op.Mode, op.Phase = ReplacementMode(mode), OperationPhase(phase)
+	op.AttachmentsFailed = failed != 0
 	op.CreatedAt, op.UpdatedAt = db.FromMillis(created), db.FromMillis(updated)
 	return op, nil
 }
@@ -442,13 +449,14 @@ func (s *Store) pendingOperationTx(ctx context.Context, q txQuerier, agentID str
 	var op Operation
 	var mode, phase string
 	var created, updated int64
+	var failed int
 	err := q.QueryRowContext(ctx, `SELECT id, agent_id, mode, phase, request_key,
 		COALESCE(session_id, ''), generation, COALESCE(note, ''), COALESCE(error, ''),
-		created_at, updated_at FROM agent_operations WHERE agent_id = ? AND phase IN
+		attachments_failed, created_at, updated_at FROM agent_operations WHERE agent_id = ? AND phase IN
 		('requested', 'preserving', 'stopping', 'ready', 'queued', 'starting')
 		ORDER BY updated_at DESC LIMIT 1`, agentID).Scan(
 		&op.ID, &op.AgentID, &mode, &phase, &op.RequestKey,
-		&op.SessionID, &op.Generation, &op.Note, &op.Error, &created, &updated)
+		&op.SessionID, &op.Generation, &op.Note, &op.Error, &failed, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, false, nil
 	}
@@ -456,6 +464,7 @@ func (s *Store) pendingOperationTx(ctx context.Context, q txQuerier, agentID str
 		return Operation{}, false, err
 	}
 	op.Mode, op.Phase = ReplacementMode(mode), OperationPhase(phase)
+	op.AttachmentsFailed = failed != 0
 	op.CreatedAt, op.UpdatedAt = db.FromMillis(created), db.FromMillis(updated)
 	return op, true, nil
 }
@@ -623,11 +632,12 @@ func (s *Store) getOperation(ctx context.Context, opID string) (Operation, error
 	var op Operation
 	var mode, phase string
 	var created, updated int64
+	var failed int
 	err := s.DB.QueryRowContext(ctx, `SELECT id, agent_id, mode, phase, request_key,
 		COALESCE(session_id, ''), generation, COALESCE(note, ''), COALESCE(error, ''),
-		created_at, updated_at FROM agent_operations WHERE id = ?`, opID).Scan(
+		attachments_failed, created_at, updated_at FROM agent_operations WHERE id = ?`, opID).Scan(
 		&op.ID, &op.AgentID, &mode, &phase, &op.RequestKey,
-		&op.SessionID, &op.Generation, &op.Note, &op.Error, &created, &updated)
+		&op.SessionID, &op.Generation, &op.Note, &op.Error, &failed, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Operation{}, &items.Error{Code: items.CodeNotFound, Message: fmt.Sprintf("No operation %s.", opID)}
 	}
@@ -635,6 +645,7 @@ func (s *Store) getOperation(ctx context.Context, opID string) (Operation, error
 		return Operation{}, err
 	}
 	op.Mode, op.Phase = ReplacementMode(mode), OperationPhase(phase)
+	op.AttachmentsFailed = failed != 0
 	op.CreatedAt, op.UpdatedAt = db.FromMillis(created), db.FromMillis(updated)
 	return op, nil
 }
