@@ -154,3 +154,32 @@ func TestRunWithLongerCallerDeadlineDoesNotTruncate(t *testing.T) {
 		t.Fatalf("expected command to abort near caller deadline ~200ms, took %v", dur)
 	}
 }
+
+// The caller parses what the program reports, so a translated system must not
+// change it: avahi-publish's "Established under name" arrives in the user's
+// language otherwise, and swarm.local never shows as registered.
+func TestStartMergedRunsInTheCLocale(t *testing.T) {
+	t.Setenv("LC_ALL", "de_DE.UTF-8")
+	t.Setenv("SWARM_TEST_KEPT", "kept")
+	p, err := StartMerged(context.Background(), "sh", "-c", `printf '%s %s' "$LC_ALL" "$SWARM_TEST_KEPT"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Kill()
+	b, _ := io.ReadAll(p.Stdout)
+	if got := string(b); got != "C kept" {
+		t.Fatalf("output = %q, want LC_ALL=C over the rest of the environment", got)
+	}
+}
+
+func TestStartMergedReadsStderrWithStdout(t *testing.T) {
+	p, err := StartMerged(context.Background(), "sh", "-c", "echo out; echo err >&2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Kill()
+	b, _ := io.ReadAll(p.Stdout)
+	if got := string(b); got != "out\nerr\n" {
+		t.Fatalf("output = %q, want both streams", got)
+	}
+}
