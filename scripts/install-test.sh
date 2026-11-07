@@ -44,8 +44,10 @@ cleanup_tmp() {
 run_install() {
   # run_install: runs install.sh, sets RUN_OUT and RUN_STATUS.
   # GHOSTTY_APP points at a nonexistent dir unless the test creates it, so
-  # the real /Applications/Ghostty.app on a Mac never leaks into tests.
-  if RUN_OUT="$(SWARM_TTY=/dev/null HOME="$TEST_HOME" SWARM_SRC="$TEST_HOME/.swarm/src/swarmrun" GHOSTTY_APP="$TMP_ROOT/Ghostty.app" SWARM_OLLAMA_TRIES=30 SWARM_OLLAMA_SLEEP=0 PATH="$STUB_BIN:/usr/bin:/bin" sh "$INSTALL_SH" 2>&1)"; then
+  # the real /Applications/Ghostty.app on a Mac never leaks into tests, and
+  # SWARM_LINUXBREW likewise for a real Homebrew on Linux. RUN_PATH replaces
+  # the PATH for a test that needs a host command to be missing.
+  if RUN_OUT="$(SWARM_TTY=/dev/null HOME="$TEST_HOME" SWARM_SRC="$TEST_HOME/.swarm/src/swarmrun" GHOSTTY_APP="$TMP_ROOT/Ghostty.app" SWARM_LINUXBREW="$TMP_ROOT/linuxbrew" SWARM_OLLAMA_TRIES=30 SWARM_OLLAMA_SLEEP=0 PATH="${RUN_PATH:-$STUB_BIN:/usr/bin:/bin}" sh "$INSTALL_SH" 2>&1)"; then
     RUN_STATUS=0
   else
     RUN_STATUS=$?
@@ -55,7 +57,7 @@ run_install() {
 t_unsupported_os() {
   new_tmp
   write_stub uname '#!/bin/sh
-echo Linux'
+echo FreeBSD'
   write_stub sw_vers '#!/bin/sh
 echo 14.5'
   write_stub brew '#!/bin/sh
@@ -64,7 +66,7 @@ exit 0'
 exit 0'
   run_install
   case "$RUN_OUT" in
-    *"Unsupported system: Linux. Swarm needs macOS 14 or later. Setup guide: https://github.com/AlexanderTar/swarmrun#requirements"*)
+    *"Unsupported system: FreeBSD. Swarm needs macOS 14 or later, or Linux with systemd. Setup guide: https://github.com/AlexanderTar/swarmrun#requirements"*)
       ok "unsupported OS stops with the exact message"
       ;;
     *)
@@ -180,6 +182,8 @@ echo Darwin'
 echo 14.5'
   write_stub xcode-select '#!/bin/sh
 exit 0'
+  write_stub systemctl '#!/bin/sh
+exit 0'
   cat >"$TMP_ROOT/ollama-stub-template" <<'STUB_EOF'
 #!/bin/sh
 echo "ollama $*" >>"$CALL_LOG"
@@ -212,6 +216,10 @@ echo "brew $*" >>"$CALL_LOG"
 if [ "${STUB_CAPTURE_STDIN:-}" = "1" ]; then
   cat >"$CALL_LOG.stdin-brew"
 fi
+if [ "${1:-}" = "--prefix" ]; then
+  echo "$STUB_TMP/linuxbrew"
+  exit 0
+fi
 if [ "${1:-}" = "list" ]; then
   kind="${2:-}"
   name="${4:-}"
@@ -227,7 +235,7 @@ if [ "${1:-}" = "list" ]; then
 fi
 if [ "${1:-}" = "install" ]; then
   case "$*" in
-    *--cask*ollama*|*ollama*--cask*)
+    *ollama*)
       if [ ! -x "$STUB_BIN/ollama" ]; then
         cp "$STUB_TMP/ollama-stub-template" "$STUB_BIN/ollama"
       fi
@@ -273,6 +281,7 @@ STUB_EOF
   cat >"$STUB_BIN/swarm" <<'STUB_EOF'
 #!/bin/sh
 echo "swarm $*" >>"$CALL_LOG"
+echo "$PATH" >"$STUB_TMP/swarm-path"
 if [ "${STUB_CAPTURE_STDIN:-}" = "1" ]; then
   cat >"$CALL_LOG.stdin-swarm"
 fi
@@ -297,7 +306,7 @@ STUB_EOF
 run_install_piped() {
   # run_install with SENTINEL-DATA on stdin: proves prompt-capable commands
   # read from the tty, not from the piped script stream.
-  if RUN_OUT="$(printf 'SENTINEL-DATA\n' | SWARM_TTY=/dev/null HOME="$TEST_HOME" SWARM_SRC="$TEST_HOME/.swarm/src/swarmrun" GHOSTTY_APP="$TMP_ROOT/Ghostty.app" SWARM_OLLAMA_TRIES=30 SWARM_OLLAMA_SLEEP=0 PATH="$STUB_BIN:/usr/bin:/bin" sh "$INSTALL_SH" 2>&1)"; then
+  if RUN_OUT="$(printf 'SENTINEL-DATA\n' | SWARM_TTY=/dev/null HOME="$TEST_HOME" SWARM_SRC="$TEST_HOME/.swarm/src/swarmrun" GHOSTTY_APP="$TMP_ROOT/Ghostty.app" SWARM_LINUXBREW="$TMP_ROOT/linuxbrew" SWARM_OLLAMA_TRIES=30 SWARM_OLLAMA_SLEEP=0 PATH="$STUB_BIN:/usr/bin:/bin" sh "$INSTALL_SH" 2>&1)"; then
     RUN_STATUS=0
   else
     RUN_STATUS=$?
@@ -396,7 +405,7 @@ t_make_receives_go_path() {
 t_guide_link_points_at_requirements() {
   new_tmp
   write_stub uname '#!/bin/sh
-echo Linux'
+echo FreeBSD'
   write_stub sw_vers '#!/bin/sh
 echo 14.5'
   write_stub brew '#!/bin/sh
@@ -416,6 +425,11 @@ exit 0'
     ok "guide anchor #requirements exists in README"
   else
     not_ok "guide anchor #requirements exists in README" "no '## Requirements' heading"
+  fi
+  if grep -q '^### Linux$' "$REPO_ROOT/README.md"; then
+    ok "guide anchor #linux exists in README"
+  else
+    not_ok "guide anchor #linux exists in README" "no '### Linux' heading"
   fi
   cleanup_tmp
 }
@@ -821,6 +835,218 @@ exit 0'
   cleanup_tmp
 }
 
+linux_stubs() {
+  # std_stubs on Linux. sw_vers and xcode-select log their calls, so a test can
+  # prove the macOS-only checks never ran.
+  std_stubs
+  write_stub uname '#!/bin/sh
+echo Linux'
+  cat >"$STUB_BIN/sw_vers" <<'STUB_EOF'
+#!/bin/sh
+echo "sw_vers $*" >>"$CALL_LOG"
+echo 14.5
+STUB_EOF
+  cat >"$STUB_BIN/xcode-select" <<'STUB_EOF'
+#!/bin/sh
+echo "xcode-select $*" >>"$CALL_LOG"
+exit 0
+STUB_EOF
+}
+
+t_linux_installs_from_homebrew() {
+  new_tmp
+  STUB_INSTALLED_FORMULAE=""
+  STUB_INSTALLED_CASKS=""
+  STUB_GIT_DIRTY=""
+  STUB_NO_OLLAMA_BIN=1
+  export STUB_INSTALLED_FORMULAE STUB_INSTALLED_CASKS STUB_GIT_DIRTY STUB_NO_OLLAMA_BIN
+  linux_stubs
+  run_install
+  if [ "$RUN_STATUS" -eq 0 ]; then
+    ok "linux install exits zero"
+  else
+    not_ok "linux install exits zero" "$RUN_OUT"
+  fi
+  if grep -q '^brew install go tmux pnpm uv node ollama$' "$CALL_LOG"; then
+    ok "linux installs every tool, ollama as a formula"
+  else
+    not_ok "linux installs every tool, ollama as a formula" "$(cat "$CALL_LOG")"
+  fi
+  if grep -q -e '--cask' -e '^sw_vers' -e '^xcode-select' "$CALL_LOG"; then
+    not_ok "linux skips casks and the macOS checks" "$(cat "$CALL_LOG")"
+  else
+    ok "linux skips casks and the macOS checks"
+  fi
+  if grep -q '^ollama pull qwen3-embedding:0.6b$' "$CALL_LOG" && grep -q '^swarm install --yes$' "$CALL_LOG"; then
+    ok "linux pulls the model and runs swarm install"
+  else
+    not_ok "linux pulls the model and runs swarm install" "$(cat "$CALL_LOG")"
+  fi
+  case "$RUN_OUT" in
+    *"menu bar"*)
+      not_ok "linux never mentions the menu bar app" "$RUN_OUT"
+      ;;
+    *"Swarm is installed. Next step: open the board at http://127.0.0.1:7777."*)
+      ok "linux finishes by pointing at the board"
+      ;;
+    *)
+      not_ok "linux finishes by pointing at the board" "$RUN_OUT"
+      ;;
+  esac
+  cleanup_tmp
+}
+
+t_linux_keeps_an_ollama_already_on_path() {
+  new_tmp
+  STUB_INSTALLED_FORMULAE="go tmux pnpm uv node"
+  STUB_INSTALLED_CASKS=""
+  STUB_GIT_DIRTY=""
+  export STUB_INSTALLED_FORMULAE STUB_INSTALLED_CASKS STUB_GIT_DIRTY
+  linux_stubs
+  run_install
+  if [ "$RUN_STATUS" -eq 0 ] && ! grep -q '^brew install' "$CALL_LOG"; then
+    ok "linux leaves an ollama on PATH alone"
+  else
+    not_ok "linux leaves an ollama on PATH alone" "status $RUN_STATUS: $(cat "$CALL_LOG")"
+  fi
+  cleanup_tmp
+}
+
+t_linux_never_runs_open() {
+  # Some distributions ship an open that is xdg-open: it must not be mistaken
+  # for the Mac's, or the install polls a minute for an app that never starts.
+  new_tmp
+  STUB_INSTALLED_FORMULAE="go tmux pnpm uv node ollama"
+  STUB_INSTALLED_CASKS=""
+  STUB_GIT_DIRTY=""
+  STUB_OLLAMA_NEEDS_SERVE=1
+  export STUB_INSTALLED_FORMULAE STUB_INSTALLED_CASKS STUB_GIT_DIRTY STUB_OLLAMA_NEEDS_SERVE
+  linux_stubs
+  run_install
+  if [ "$RUN_STATUS" -eq 0 ] && ! grep -q '^open' "$CALL_LOG"; then
+    ok "linux never runs open"
+  else
+    not_ok "linux never runs open" "status $RUN_STATUS: $(cat "$CALL_LOG")"
+  fi
+  if grep -q '^ollama serve' "$CALL_LOG" && grep -q '^ollama pull' "$CALL_LOG"; then
+    ok "linux starts ollama itself before the pull"
+  else
+    not_ok "linux starts ollama itself before the pull" "$(cat "$CALL_LOG")"
+  fi
+  cleanup_tmp
+}
+
+t_linux_puts_homebrew_before_the_system_tools() {
+  # swarm install writes this PATH into the systemd unit. /usr/bin first would
+  # leave the daemon on the distribution's tmux, which is older than 3.6.
+  new_tmp
+  STUB_INSTALLED_FORMULAE="go tmux pnpm uv node ollama"
+  STUB_INSTALLED_CASKS=""
+  STUB_GIT_DIRTY=""
+  export STUB_INSTALLED_FORMULAE STUB_INSTALLED_CASKS STUB_GIT_DIRTY
+  linux_stubs
+  run_install
+  case "$(cat "$TMP_ROOT/swarm-path" 2>/dev/null)" in
+    *"$TMP_ROOT/linuxbrew/bin:"*/usr/bin*)
+      ok "swarm install sees Homebrew before /usr/bin"
+      ;;
+    *)
+      not_ok "swarm install sees Homebrew before /usr/bin" "$RUN_OUT"
+      ;;
+  esac
+  cleanup_tmp
+}
+
+t_linux_finds_homebrew_off_path() {
+  # Homebrew's installer leaves adding itself to PATH to the shell profile.
+  new_tmp
+  STUB_INSTALLED_FORMULAE="go tmux pnpm uv node ollama"
+  STUB_INSTALLED_CASKS=""
+  STUB_GIT_DIRTY=""
+  export STUB_INSTALLED_FORMULAE STUB_INSTALLED_CASKS STUB_GIT_DIRTY
+  linux_stubs
+  mkdir -p "$TMP_ROOT/linuxbrew/bin"
+  mv "$STUB_BIN/brew" "$TMP_ROOT/linuxbrew/bin/brew"
+  run_install
+  if [ "$RUN_STATUS" -eq 0 ] && grep -q '^brew list' "$CALL_LOG"; then
+    ok "linux finds Homebrew in its default prefix"
+  else
+    not_ok "linux finds Homebrew in its default prefix" "$RUN_OUT"
+  fi
+  cleanup_tmp
+}
+
+t_linux_no_homebrew() {
+  new_tmp
+  linux_stubs
+  rm "${STUB_BIN:?}/brew"
+  run_install
+  # shellcheck disable=SC2016
+  case "$RUN_OUT" in
+    *'Homebrew is missing. Install it with: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" and re-run this script.'*)
+      ok "linux without Homebrew stops with the exact message"
+      ;;
+    *)
+      not_ok "linux without Homebrew stops with the exact message" "$RUN_OUT"
+      ;;
+  esac
+  if [ "$RUN_STATUS" -ne 0 ]; then
+    ok "linux without Homebrew exits non-zero"
+  else
+    not_ok "linux without Homebrew exits non-zero" "exit was 0"
+  fi
+  cleanup_tmp
+}
+
+t_linux_needs_a_systemd_user_session() {
+  new_tmp
+  linux_stubs
+  write_stub systemctl '#!/bin/sh
+exit 1'
+  run_install
+  case "$RUN_OUT" in
+    *"Swarm on Linux needs a systemd user session. Setup guide: https://github.com/AlexanderTar/swarmrun#linux"*)
+      ok "linux without systemd stops with the exact message"
+      ;;
+    *)
+      not_ok "linux without systemd stops with the exact message" "$RUN_OUT"
+      ;;
+  esac
+  if [ "$RUN_STATUS" -ne 0 ] && ! grep -q '^brew' "$CALL_LOG"; then
+    ok "linux without systemd stops before installing anything"
+  else
+    not_ok "linux without systemd stops before installing anything" "status $RUN_STATUS: $(cat "$CALL_LOG")"
+  fi
+  cleanup_tmp
+}
+
+t_linux_needs_git_and_make() {
+  # Xcode's tools bring both on a Mac; nothing here installs them on Linux.
+  for tool in git make; do
+    new_tmp
+    linux_stubs
+    rm "${STUB_BIN:?}/${tool:?}"
+    ln -s "$(command -v sh)" "$STUB_BIN/sh"
+    RUN_PATH="$STUB_BIN"
+    run_install
+    unset RUN_PATH
+    case "$RUN_OUT" in
+      *"$tool is missing. Install it with your package manager and re-run this script."*)
+        ok "linux without $tool stops with the exact message"
+        ;;
+      *)
+        not_ok "linux without $tool stops with the exact message" "$RUN_OUT"
+        ;;
+    esac
+    if [ "$RUN_STATUS" -ne 0 ]; then
+      ok "linux without $tool exits non-zero"
+    else
+      not_ok "linux without $tool exits non-zero" "exit was 0"
+    fi
+    cleanup_tmp
+  done
+}
+
 t_unsupported_os
 t_old_macos
 t_no_homebrew
@@ -844,6 +1070,14 @@ t_commands_ignore_script_stream
 t_failing_step_names_itself
 t_no_agent_cli_warns
 t_agent_cli_present_ok
+t_linux_installs_from_homebrew
+t_linux_keeps_an_ollama_already_on_path
+t_linux_never_runs_open
+t_linux_puts_homebrew_before_the_system_tools
+t_linux_finds_homebrew_off_path
+t_linux_no_homebrew
+t_linux_needs_a_systemd_user_session
+t_linux_needs_git_and_make
 
 printf 'install-test: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

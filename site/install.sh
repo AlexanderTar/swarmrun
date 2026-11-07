@@ -29,20 +29,40 @@ main() {
 
   step "Checking system..."
   os="$(uname -s)"
-  if [ "$os" != "Darwin" ]; then
-    printf 'Unsupported system: %s. Swarm needs macOS 14 or later. Setup guide: %s\n' "$os" "$guide_url" >&2
-    exit 1
-  fi
-  ver="$(sw_vers -productVersion)"
-  major="${ver%%.*}"
-  case "$major" in
-    '' | *[!0-9]*)
-      fail "System check" "could not parse macOS version '$ver'." "sw_vers -productVersion"
+  case "$os" in
+    Darwin | Linux) ;;
+    *)
+      printf 'Unsupported system: %s. Swarm needs macOS 14 or later, or Linux with systemd. Setup guide: %s\n' "$os" "$guide_url" >&2
+      exit 1
       ;;
   esac
-  if [ "$major" -lt 14 ]; then
-    printf 'macOS 14 or later is required (found %s). Setup guide: %s\n' "$ver" "$guide_url" >&2
-    exit 1
+  if [ "$os" = "Darwin" ]; then
+    ver="$(sw_vers -productVersion)"
+    major="${ver%%.*}"
+    case "$major" in
+      '' | *[!0-9]*)
+        fail "System check" "could not parse macOS version '$ver'." "sw_vers -productVersion"
+        ;;
+    esac
+    if [ "$major" -lt 14 ]; then
+      printf 'macOS 14 or later is required (found %s). Setup guide: %s\n' "$ver" "$guide_url" >&2
+      exit 1
+    fi
+  else
+    if ! systemctl --user show-environment >/dev/null 2>&1; then
+      printf 'Swarm on Linux needs a systemd user session. Setup guide: https://github.com/AlexanderTar/swarmrun#linux\n' >&2
+      exit 1
+    fi
+    for tool in git make; do
+      if ! command -v "$tool" >/dev/null 2>&1; then
+        printf '%s is missing. Install it with your package manager and re-run this script.\n' "$tool" >&2
+        exit 1
+      fi
+    done
+    if ! command -v brew >/dev/null 2>&1; then
+      # Homebrew's installer leaves adding itself to PATH to the shell profile.
+      PATH="${SWARM_LINUXBREW:-/home/linuxbrew/.linuxbrew}/bin:$PATH"
+    fi
   fi
   if ! command -v brew >/dev/null 2>&1; then
     # shellcheck disable=SC2016
@@ -50,7 +70,12 @@ main() {
     printf 'Homebrew is missing. Install it with: %s and re-run this script.\n' "$brew_cmd" >&2
     exit 1
   fi
-  if ! xcode-select -p >/dev/null 2>&1; then
+  if [ "$os" = "Linux" ]; then
+    # swarm install writes this PATH into the systemd unit: Homebrew goes first
+    # so the daemon gets its tmux, not the distribution's older one.
+    PATH="$(brew --prefix)/bin:$PATH"
+    export PATH
+  elif ! xcode-select -p >/dev/null 2>&1; then
     printf 'Xcode command line tools are missing. Run: xcode-select --install and re-run this script.\n' >&2
     exit 1
   fi
@@ -63,33 +88,41 @@ main() {
       missing="$missing $pkg"
     fi
   done
+  # Casks are macOS-only: on Linux ollama is a formula.
+  if [ "$os" = "Linux" ] \
+    && ! brew list --formula --versions ollama >/dev/null 2>&1 \
+    && ! command -v ollama >/dev/null 2>&1; then
+    missing="$missing ollama"
+  fi
   if [ -n "$missing" ]; then
     # shellcheck disable=SC2086
     if ! brew install $missing <"$tty_in"; then
       fail "Tool install" "brew install$missing failed." "brew install$missing"
     fi
   fi
-  ghostty_app="${GHOSTTY_APP:-/Applications/Ghostty.app}"
-  missing_casks=""
-  if ! brew list --cask --versions ghostty >/dev/null 2>&1 \
-    && [ ! -d "$ghostty_app" ]; then
-    missing_casks="$missing_casks ghostty"
-  fi
-  if ! brew list --cask --versions ollama >/dev/null 2>&1 \
-    && ! brew list --formula --versions ollama >/dev/null 2>&1 \
-    && ! command -v ollama >/dev/null 2>&1; then
-    missing_casks="$missing_casks ollama"
-  fi
-  if [ -n "$missing_casks" ]; then
-    # shellcheck disable=SC2086
-    if ! brew install --cask $missing_casks <"$tty_in"; then
-      fail "Tool install" "brew install --cask$missing_casks failed." "brew install --cask$missing_casks"
+  if [ "$os" = "Darwin" ]; then
+    ghostty_app="${GHOSTTY_APP:-/Applications/Ghostty.app}"
+    missing_casks=""
+    if ! brew list --cask --versions ghostty >/dev/null 2>&1 \
+      && [ ! -d "$ghostty_app" ]; then
+      missing_casks="$missing_casks ghostty"
+    fi
+    if ! brew list --cask --versions ollama >/dev/null 2>&1 \
+      && ! brew list --formula --versions ollama >/dev/null 2>&1 \
+      && ! command -v ollama >/dev/null 2>&1; then
+      missing_casks="$missing_casks ollama"
+    fi
+    if [ -n "$missing_casks" ]; then
+      # shellcheck disable=SC2086
+      if ! brew install --cask $missing_casks <"$tty_in"; then
+        fail "Tool install" "brew install --cask$missing_casks failed." "brew install --cask$missing_casks"
+      fi
     fi
   fi
 
   step "Downloading embedding model..."
   if ! ollama list <"$tty_in" >/dev/null 2>&1; then
-    if command -v open >/dev/null 2>&1; then
+    if [ "$os" = "Darwin" ] && command -v open >/dev/null 2>&1; then
       open -a Ollama <"$tty_in" >/dev/null 2>&1 || true
       # open returns before the app's server is listening; polling list
       # first avoids racing it with our own ollama serve on port 11434.
@@ -164,7 +197,11 @@ main() {
   if [ -z "$found_agent" ]; then
     printf 'Warning: no agent CLI found. Install one of claude, codex, agy, cursor-agent, muse or grok and sign in; Swarm needs an agent to work with.\n'
   fi
-  printf 'Swarm is installed. Next step: open the Swarm menu bar app and the board.\n'
+  if [ "$os" = "Darwin" ]; then
+    printf 'Swarm is installed. Next step: open the Swarm menu bar app and the board.\n'
+  else
+    printf 'Swarm is installed. Next step: open the board at http://127.0.0.1:7777.\n'
+  fi
 }
 
 main "$@"

@@ -235,3 +235,21 @@ func TestNotLoadedIsExportedForMigrate(t *testing.T) {
 		t.Error("a real failure must not count as not loaded")
 	}
 }
+
+func TestLinuxPathKeepsHomebrewAheadOfTheSystemFolders(t *testing.T) {
+	present := func(p string) bool { return p == linuxbrewBin }
+	for _, tc := range []struct{ name, in, want string }{
+		{"missing from the caller's PATH", "/home/a/bin:/usr/local/bin:/usr/bin:/bin",
+			"/home/a/bin:/usr/local/bin:" + linuxbrewBin + ":/usr/bin:/bin"},
+		{"behind /usr/bin", "/usr/bin:/bin:" + linuxbrewBin, linuxbrewBin + ":/usr/bin:/bin"},
+		{"already ahead, order kept", "/home/a/bin:" + linuxbrewBin + ":/usr/local/bin:/usr/bin",
+			"/home/a/bin:" + linuxbrewBin + ":/usr/local/bin:/usr/bin"},
+	} {
+		if got := LinuxPath(tc.in, present); got != tc.want {
+			t.Errorf("%s: LinuxPath = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	if got := LinuxPath("/usr/bin:/bin", func(string) bool { return false }); got != "/usr/bin:/bin" {
+		t.Errorf("no Homebrew on this machine: LinuxPath = %q", got)
+	}
+}

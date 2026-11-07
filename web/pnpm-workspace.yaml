@@ -1,2 +1,9 @@
 packages:
   - "."
+
+# Homebrew's pnpm 12 fails `pnpm install` on a dependency build script that
+# is neither allowed nor denied. Biome's postinstall only checks that its
+# platform binary resolves and warns if not, so it stays skipped, as pnpm 10
+# already skips it.
+allowBuilds:
+  "@biomejs/biome": false
