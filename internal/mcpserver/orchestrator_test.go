@@ -2997,3 +2997,61 @@ func TestItemsToolUpdateRefusesReposOnChildAndOtherRootAsCreateOnly(t *testing.T
 		}
 	}
 }
+
+// BUG-171: blocked_by, parent, type, intent and role_hint were decoded by
+// swarm_items update and silently dropped. Each must be refused with an
+// accurate pointer, and nothing may change.
+func TestItemsToolUpdateRefusesFieldsItNeverApplied(t *testing.T) {
+	s, seed := newOrchestratorServer(t)
+	ctx := context.Background()
+	cases := []struct{ name, field, want string }{
+		{"blocked_by", fmt.Sprintf(`"blocked_by":%q`, seed.OtherTaskKey), "op link"},
+		{"parent", fmt.Sprintf(`"parent":%q`, seed.RootKey), "only at create"},
+		{"type", `"type":"story"`, "only at create"},
+		{"intent", `"intent":"research"`, "only at create"},
+		{"role_hint", `"role_hint":"coder"`, "only at create"},
+	}
+	for _, tc := range cases {
+		before, err := s.RT.Items.Get(ctx, seed.TaskKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = s.call(ctx, seed.Caller, "swarm_items", fmt.Sprintf(
+			`{"op":"update","key":%q,"revision":%d,%s}`, seed.TaskKey, before.Revision, tc.field))
+		if err == nil {
+			t.Fatalf("%s: update succeeded; it must be refused", tc.name)
+		}
+		if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), tc.name) {
+			t.Fatalf("%s: err = %q, want it to name the field and %q", tc.name, err, tc.want)
+		}
+		after, err := s.RT.Items.Get(ctx, seed.TaskKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.Revision != before.Revision || len(after.BlockedBy) != len(before.BlockedBy) ||
+			after.ParentKey != before.ParentKey || after.Type != before.Type {
+			t.Fatalf("%s: refused update changed the item: before %+v after %+v", tc.name, before, after)
+		}
+	}
+}
+
+// Guard for the refusals above: ordinary title/status/waive updates still work.
+func TestItemsToolUpdateStillAppliesTitleAndStatus(t *testing.T) {
+	s, seed := newOrchestratorServer(t)
+	ctx := context.Background()
+	it, err := s.RT.Items.Get(ctx, seed.TaskKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.call(ctx, seed.Caller, "swarm_items", fmt.Sprintf(
+		`{"op":"update","key":%q,"revision":%d,"title":"Renamed again","status":"ready"}`, seed.TaskKey, it.Revision)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.RT.Items.Get(ctx, seed.TaskKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "Renamed again" || got.Status != items.Ready || got.Revision <= it.Revision {
+		t.Fatalf("item = %+v", got)
+	}
+}

@@ -294,6 +294,22 @@ func itemsTool(s *Server) ToolDef {
 					}
 					return nil, err
 				}
+				// BUG-171: these fields were decoded but never applied by update.
+				if in.BlockedBy != "" {
+					return nil, &items.Error{Code: items.CodeBadRequest,
+						Message: "blocked_by cannot be changed with swarm_items update. Use op link or op unlink."}
+				}
+				for _, f := range []struct{ name, val string }{
+					{"parent", in.Parent}, {"type", in.Type}, {"intent", in.Intent}, {"role_hint", in.RoleHint},
+				} {
+					if f.val != "" {
+						msg := f.name + " can be set only at create; swarm_items update does not change it."
+						if f.name == "role_hint" {
+							msg = "role_hint can be set only at create (it comes from the workflow); swarm_items update does not change it."
+						}
+						return nil, &items.Error{Code: items.CodeBadRequest, Message: msg}
+					}
+				}
 				if in.Repos != nil {
 					// BUG-171: update never applied repos; refuse instead of
 					// returning the unchanged item as success.
