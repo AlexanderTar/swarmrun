@@ -193,6 +193,13 @@ var (
 	grokProcess = []*regexp.Regexp{regexp.MustCompile(`^grok(-\d.*)?$`)}
 	grokIdle    = regexp.MustCompile(`(?m)^\s*Shift\+Tab:mode\s+│\s+Ctrl\+x:shortcuts\s*$`)
 	grokBusy    = regexp.MustCompile(`(?m)(\[stop\]\s*$|│\s+Ctrl\+c:cancel\s+│)`)
+	// BUG-172: the Tasks block above the composer while a background command
+	// runs, e.g. "▾ Tasks 1" (the block lists each running task with a
+	// varying glyph). The block is gone once the command exits, and a busy
+	// turn shows Waiting… [stop] instead. The docs' "◎ … still running" line
+	// never appeared in the live probe, so it is not matched. Fixtures in
+	// testdata/grok/pane-background-{running,busy,exited}.txt.
+	grokBackgroundRunning = regexp.MustCompile(`(?m)^\s*▾ Tasks \d+`)
 	// grokCard is a modal card (an upgrade or usage-limit offer, or a question):
 	// it swallows typed text, and only a person (or Shift+x) clears it.
 	grokCard = regexp.MustCompile(`Tab:next answer\s+│\s+Esc:scrollback`)
@@ -211,6 +218,12 @@ var (
 func (g *Grok) ProcessNames() []*regexp.Regexp { return grokProcess }
 func (g *Grok) IdlePrompt() *regexp.Regexp     { return grokIdle }
 func (g *Grok) Busy() *regexp.Regexp           { return grokBusy }
+
+// BackgroundRunning and WakesOnBackgroundExit implement BackgroundWaker:
+// grok re-invokes an idle agent when its background task exits (proven live
+// 2026-11-10, second probe in research BUG-172/background-wake.md).
+func (g *Grok) BackgroundRunning() *regexp.Regexp { return grokBackgroundRunning }
+func (g *Grok) WakesOnBackgroundExit() bool       { return true }
 
 // Idle reads the stripped pane: IdlePrompt spans several colour-coded segments.
 func (g *Grok) Idle(capture string) bool { return idle(g, StripANSI(capture)) }

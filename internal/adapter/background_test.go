@@ -64,6 +64,18 @@ func TestBackgroundRunningSignal(t *testing.T) {
 			pane(t, "muse", "pane-idle.txt"), false},
 		{"muse busy turn", func() Adapter { return newMuse(d) },
 			pane(t, "muse", "pane-busy-ansi.txt"), false},
+		// Grok: the Tasks block above the composer lists the running
+		// background command (glyph varies: ⁙, :, ⋅). The block is gone once
+		// the command exits (the post-exit wake turn shows Waiting… [stop]
+		// with no Tasks block); the pre-job busy turn has none either.
+		{"grok running task", func() Adapter { return newGrok(d) },
+			pane(t, "grok", "pane-background-running.txt"), true},
+		{"grok busy turn", func() Adapter { return newGrok(d) },
+			pane(t, "grok", "pane-background-busy.txt"), false},
+		{"grok after exit", func() Adapter { return newGrok(d) },
+			pane(t, "grok", "pane-background-exited.txt"), false},
+		{"grok idle no job", func() Adapter { return newGrok(d) },
+			pane(t, "grok", "grok-tui-idle.txt"), false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -75,9 +87,9 @@ func TestBackgroundRunningSignal(t *testing.T) {
 }
 
 // Only the kinds with a proven-live idle wake on background-command exit
-// (claude, muse) carry the BackgroundWaker capability with the wake fact on.
-// Grok's docs claim a wake but no live idle wake was recorded; codex, cursor
-// and agy have none: they stay off (no method) and keep the stall alert.
+// (claude, muse, grok) carry the BackgroundWaker capability with the wake
+// fact on. Codex, cursor and agy have no proven wake: they stay off (no
+// method) and keep the stall alert.
 func TestBackgroundWakeFactOnlyForProvenKinds(t *testing.T) {
 	d := testDeps(t)
 	for _, tc := range []struct {
@@ -87,6 +99,7 @@ func TestBackgroundWakeFactOnlyForProvenKinds(t *testing.T) {
 	}{
 		{"claude", func() Adapter { return newClaude(d) }, true},
 		{"muse", func() Adapter { return newMuse(d) }, true},
+		{"grok", func() Adapter { return newGrok(d) }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			bw, ok := tc.new().(BackgroundWaker)
@@ -106,7 +119,6 @@ func TestBackgroundWakeFactOnlyForProvenKinds(t *testing.T) {
 		name string
 		new  func() Adapter
 	}{
-		{"grok", func() Adapter { return newGrok(d) }},
 		{"codex", func() Adapter { return newCodex(d) }},
 		{"cursor", func() Adapter { return newCursor(d) }},
 		{"agy", func() Adapter { return newAgy(d) }},

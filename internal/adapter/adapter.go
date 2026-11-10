@@ -210,10 +210,10 @@ type StartupStaller interface {
 
 // BackgroundWaker is an optional Adapter capability for kinds whose harness
 // re-invokes an idle agent when its background command exits (BUG-172). Only
-// kinds with a proven-live idle wake implement it: claude and muse, probed
-// 2026-11-10 (research BUG-172/background-wake.md). Grok's docs claim a wake
-// but no live idle wake was recorded; codex, cursor and agy have none. Those
-// kinds leave this out entirely and keep the stall alert.
+// kinds with a proven-live idle wake implement it: claude and muse (probed
+// 2026-11-10) and grok (probed 2026-11-10, second probe); research
+// BUG-172/background-wake.md. Codex, cursor and agy have no proven wake.
+// Those kinds leave this out entirely and keep the stall alert.
 type BackgroundWaker interface {
 	// BackgroundRunning matches an idle pane whose background command is
 	// still running. Nil means the kind reports no signal.

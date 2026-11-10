@@ -30,7 +30,7 @@ const (
 	bgIdleCapture    = "─────\n❯ \n─────\n"
 )
 
-func selfWaking(kind AgentKind) bool { return kind == Claude || kind == Muse }
+func selfWaking(kind AgentKind) bool { return kind == Claude || kind == Muse || kind == Grok }
 
 // bgDeadlockSetup spawns the standard progress/deadlock worker (orchestrator
 // plus coder with a progress checkpoint), reassigns the coder to kind, and
@@ -269,8 +269,8 @@ func TestProgressNextDiffersForSelfWakingKinds(t *testing.T) {
 		kind     AgentKind
 		selfWake bool
 	}{
-		{Claude, true}, {Muse, true},
-		{Fake, false}, {Grok, false}, {Codex, false}, {Cursor, false}, {Agy, false},
+		{Claude, true}, {Muse, true}, {Grok, true},
+		{Fake, false}, {Codex, false}, {Cursor, false}, {Agy, false},
 	} {
 		t.Run(string(tc.kind), func(t *testing.T) {
 			s, _, _ := newStore(t)

@@ -31,17 +31,17 @@ const progressKeepWorkingNext = "Keep working in this turn: continue with the ne
 
 // progressKeepWorkingSelfWakeNext is the progress response's next for a
 // workflow run step on a kind whose harness wakes an idle agent when its
-// background command exits (claude, muse -- BUG-172): the worker may end its
-// turn after a progress checkpoint that names the command, and must not poll
-// for it. A worker a message wakes while its own command still runs leaves
-// the command running.
+// background command exits (claude, muse, grok -- BUG-172): the worker may
+// end its turn after a progress checkpoint that names the command, and must
+// not poll for it. A worker a message wakes while its own command still runs
+// leaves the command running.
 const progressKeepWorkingSelfWakeNext = "Keep working on the next unit. If you started a background command, name it in this checkpoint and end your turn without polling: the harness wakes you when it exits. If a message wakes you while your command still runs, leave it running; otherwise don't end your turn until you write completed, blocked or failed."
 
 // progressNextFor returns the progress response's next for the agent's kind:
 // workers on self-waking kinds may end the turn after naming their background
 // command; every other kind keeps waiting in the foreground.
 func progressNextFor(kind AgentKind) string {
-	if kind == Claude || kind == Muse {
+	if kind == Claude || kind == Muse || kind == Grok {
 		return progressKeepWorkingSelfWakeNext
 	}
 	return progressKeepWorkingNext
