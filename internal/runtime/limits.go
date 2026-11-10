@@ -64,7 +64,7 @@ import (
 // compose it into a query whose outer table is `agents` -- required, since
 // the SQL fragment references `agents.id`/`agents.item_id` unqualified.
 //
-// A completed/failed the user declined afterwards does not free the slot
+// A completed whose close_spike the user declined does not free the slot
 // (BUG-170, notSupersededSQL): the agent kept working after a declined close.
 const NotAZombieSlot = `NOT EXISTS (
 		SELECT 1 FROM sessions s WHERE s.agent_id = agents.id

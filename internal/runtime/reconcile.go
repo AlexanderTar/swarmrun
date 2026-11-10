@@ -95,19 +95,20 @@ func (r liveRow) lastActivity() time.Time {
 
 // notSupersededSQL is the shared "effective terminal checkpoint" fragment
 // (BUG-170): a completed/failed checkpoint (alias c) counts as the agent being
-// done unless the user declined it afterwards. The durable signal is a
-// close_spike request of the same agent and item that a human resolved as
-// changes_requested at or after the checkpoint: the agent was sent back to
-// work and keeps going in the same session and attempt (SPIKE-82's no-change
-// close). Without it the busy cap killed the live pane, its dead pane read as
-// completed, a restart minted a new agent, and it stopped holding a slot.
-// A plain later checkpoint does NOT supersede: finished agents often write a
-// stray note after their completed, and those must still be killed, relayed
-// as done and release their slot. A new completed after the decline is newer
-// than the decline and counts again.
-const notSupersededSQL = `NOT EXISTS (SELECT 1 FROM requests rq WHERE rq.agent_id = c.agent_id
-			AND rq.item_id = c.item_id AND rq.kind = 'close_spike' AND rq.state = 'changes_requested'
-			AND rq.responded_at >= c.created_at)`
+// done unless its own close was declined. WriteCheckpoint inserts a
+// close_spike request in the same transaction as a no-change completed, so the
+// two share agent, session and created_at; when the user then resolves that
+// request changes_requested the agent is sent back to work in the same session
+// and attempt (SPIKE-82). Without this the busy cap killed the live pane, its
+// dead pane read as completed, a restart minted a new agent, and it stopped
+// holding a slot. An open (unanswered) close still counts as completed, and a
+// plain later checkpoint does NOT supersede: finished agents often write a
+// stray note after their completed, and those must still be killed, relayed as
+// done and release their slot. Workflow fix rounds reopen by bumping the
+// attempt, so this is the only same-attempt reopen path.
+const notSupersededSQL = `NOT EXISTS (SELECT 1 FROM requests rq WHERE rq.kind = 'close_spike'
+			AND rq.state = 'changes_requested' AND rq.agent_id = c.agent_id
+			AND rq.session_id = c.session_id AND rq.created_at = c.created_at)`
 
 // liveSessionRows loads every session in a live state (§5's LiveStates).
 func (s *Store) liveSessionRows(ctx context.Context) ([]liveRow, error) {
@@ -504,9 +505,8 @@ func (s *Store) withdrawOrphanedRequests(ctx context.Context) error {
 }
 
 // terminalCheckpointKind is the most recent completed/failed checkpoint
-// against the agent's OWN item for this attempt, if any, that the user did
-// not decline afterwards (notSupersededSQL). A completed/failed
-// checkpoint against a child item (an orchestrator's routine board
+// against the agent's OWN item for this attempt, if any, whose close the user
+// did not decline (notSupersededSQL). A completed/failed checkpoint against a child item (an orchestrator's routine board
 // bookkeeping) does not count: it says nothing about whether the agent's own
 // assignment is done.
 func (s *Store) terminalCheckpointKind(ctx context.Context, agentID, itemID string, attempt int) (CheckpointKind, bool, error) {

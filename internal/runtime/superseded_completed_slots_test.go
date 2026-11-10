@@ -29,7 +29,7 @@ func TestSupersededCompletedStillHoldsASlot(t *testing.T) {
 	at.Advance(time.Minute)
 	insertAgentCkp(t, s, "ckp_slot_completed", first, ses, CompletedCkp, "done")
 	at.Advance(time.Minute)
-	declineClose(t, s, "req_slot_close", first, ses)
+	declineClose(t, s, "req_slot_close", first, ses, "changes_requested")
 	at.Advance(time.Second)
 	insertAgentCkp(t, s, "ckp_slot_progress2", first, ses, Progress, "close declined, continuing")
 

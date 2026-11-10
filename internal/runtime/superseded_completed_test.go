@@ -23,16 +23,20 @@ func insertAgentCkp(t *testing.T, s *Store, id string, a Agent, ses Session, kin
 		id, ses.ID, a.ID, a.ItemID, string(kind), ses.Attempt, summary, db.Millis(s.Now()))
 }
 
-// declineClose records what RequestChanges leaves on a close_spike request
-// the user declined: state changes_requested, responded_at now. That durable
-// row is what tells a declined completed from a stray note after a genuine one.
-func declineClose(t *testing.T, s *Store, id string, a Agent, ses Session) {
+// declineClose records what WriteCheckpoint and RequestChanges leave for a
+// declined no-change close: a close_spike request created in the same
+// transaction as the agent's latest completed (same agent, session and
+// created_at), resolved changes_requested. That durable row is what tells a
+// declined completed from a stray note after a genuine one.
+func declineClose(t *testing.T, s *Store, id string, a Agent, ses Session, state string) {
 	t.Helper()
 	mustExec(t, s.DB, `INSERT INTO requests (id, kind, agent_id, session_id, item_id, prompt, state,
 		binding_json, created_at, responded_at, responded_via)
-		VALUES (?, 'close_spike', ?, ?, ?, 'found nothing to build', 'changes_requested',
-		'{"resolution":"no_change"}', ?, ?, 'board')`,
-		id, a.ID, ses.ID, a.ItemID, db.Millis(s.Now()), db.Millis(s.Now()))
+		SELECT ?, 'close_spike', c.agent_id, c.session_id, c.item_id, 'found nothing to build', ?,
+		'{"resolution":"no_change"}', c.created_at, ?, 'board'
+		FROM checkpoints c WHERE c.agent_id = ? AND c.session_id = ? AND c.kind = 'completed'
+		ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1`,
+		id, state, db.Millis(s.Now()), a.ID, ses.ID)
 }
 
 // replaySpike82 replays accepted, progress, completed, then (close declined)
@@ -52,7 +56,7 @@ func replaySpike82(t *testing.T, s *Store, at *testClock) (Agent, Session) {
 	at.Advance(time.Minute)
 	insertAgentCkp(t, s, "ckp_s82_completed", orch, ses, CompletedCkp, "no change: closing the spike")
 	at.Advance(8 * time.Minute) // the user declines the close; the agent keeps going
-	declineClose(t, s, "req_s82_close", orch, ses)
+	declineClose(t, s, "req_s82_close", orch, ses, "changes_requested")
 	at.Advance(time.Second)
 	insertAgentCkp(t, s, "ckp_s82_progress2", orch, ses, Progress, "close declined, continuing")
 	return orch, ses
@@ -122,7 +126,7 @@ func TestDeadPaneAfterASupersededCompletedIsCrashed(t *testing.T) {
 	at.Advance(time.Minute)
 	insertAgentCkp(t, s, "ckp_w_completed", w, wSes, CompletedCkp, "done")
 	at.Advance(time.Minute)
-	declineClose(t, s, "req_w_close", w, wSes)
+	declineClose(t, s, "req_w_close", w, wSes, "changes_requested")
 	at.Advance(time.Second)
 	insertAgentCkp(t, s, "ckp_w_progress2", w, wSes, Progress, "more work after all")
 	orchSes := mustSessionID(t, s, orch.ID)
@@ -251,6 +255,15 @@ func replayStrayNote(t *testing.T, s *Store, at *testClock) (Agent, Session) {
 	return orch, ses
 }
 
+// replayOpenClose replays a no-change completed whose close_spike is still
+// open (not yet answered), then a note: today's behaviour, still completed.
+func replayOpenClose(t *testing.T, s *Store, at *testClock) (Agent, Session) {
+	t.Helper()
+	orch, ses := replayStrayNote(t, s, at)
+	declineClose(t, s, "req_open_close", orch, ses, "open")
+	return orch, ses
+}
+
 // A stray note after a genuine completed leaves the finished-agent policy on:
 // the 60 s idle kill and the 2 h busy cap still fire, and the session still
 // reads as completed (so the progress nudge, final note and slot stay off).
@@ -295,7 +308,8 @@ func TestCompletedMarkerSurvivesAStrayNoteButNotADeclinedClose(t *testing.T) {
 		name   string
 		replay func(*testing.T, *Store, *testClock) (Agent, Session)
 		want   bool
-	}{{"stray note", replayStrayNote, true}, {"declined close", replaySpike82, false}} {
+	}{{"stray note", replayStrayNote, true}, {"declined close", replaySpike82, false},
+		{"open close", replayOpenClose, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _, at := clockStore(t)
 			a, _ := tc.replay(t, s, at)
