@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/AlexanderTar/swarmrun/internal/adapter"
+	"github.com/AlexanderTar/swarmrun/internal/workflow"
 )
 
 // bgSignalAdapter is the Fake with a background-running pane signal: the test
@@ -255,6 +256,50 @@ func TestBackgroundSignalLeavesBusySinceAlone(t *testing.T) {
 			}
 			if since, ok := s.BusySince(ses.ID); ok {
 				t.Fatalf("%s with background signal: BusySince = %v, want idle (no busy label)", kind, since)
+			}
+		})
+	}
+}
+
+// BUG-172: the progress response's next tells a worker on a self-waking kind
+// (claude, muse) it may end the turn after naming its background command and
+// must not poll; every other kind keeps waiting in the foreground.
+func TestProgressNextDiffersForSelfWakingKinds(t *testing.T) {
+	for _, tc := range []struct {
+		kind     AgentKind
+		selfWake bool
+	}{
+		{Claude, true}, {Muse, true},
+		{Fake, false}, {Grok, false}, {Codex, false}, {Cursor, false}, {Agy, false},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			s, _, _ := newStore(t)
+			ctx := context.Background()
+			coder, coderSes, _ := buildOnly(t, s, workflow.GateTDD)
+			if _, err := s.DB.ExecContext(ctx, `UPDATE agents SET kind = ? WHERE id = ?`,
+				string(tc.kind), coder.ID); err != nil {
+				t.Fatal(err)
+			}
+			res, err := s.WriteCheckpoint(ctx, coderSes.ID, CheckpointInput{Kind: Progress,
+				Summary:      "unit 1 red",
+				Verification: []Verify{{Cmd: "go test ./x", Phase: "red", OK: false}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.selfWake {
+				if res.Next != progressKeepWorkingNext {
+					t.Fatalf("%s Next = %q, want the foreground-wait text %q",
+						tc.kind, res.Next, progressKeepWorkingNext)
+				}
+				return
+			}
+			if res.Next == progressKeepWorkingNext {
+				t.Fatalf("%s Next is the foreground-wait text; want the self-wake text", tc.kind)
+			}
+			for _, want := range []string{"background command", "without polling"} {
+				if !strings.Contains(res.Next, want) {
+					t.Fatalf("%s Next = %q, want it to mention %q", tc.kind, res.Next, want)
+				}
 			}
 		})
 	}

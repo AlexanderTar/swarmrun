@@ -29,6 +29,24 @@ const verifyMissing = "Verification evidence missing: record what was run to ver
 // step (BUG-41): a progress checkpoint is not a turn boundary.
 const progressKeepWorkingNext = "Keep working in this turn: continue with the next unit. Don't end your turn until you write completed, blocked or failed."
 
+// progressKeepWorkingSelfWakeNext is the progress response's next for a
+// workflow run step on a kind whose harness wakes an idle agent when its
+// background command exits (claude, muse -- BUG-172): the worker may end its
+// turn after a progress checkpoint that names the command, and must not poll
+// for it. A worker a message wakes while its own command still runs leaves
+// the command running.
+const progressKeepWorkingSelfWakeNext = "Keep working on the next unit. If you started a background command, name it in this checkpoint and end your turn without polling: the harness wakes you when it exits. If a message wakes you while your command still runs, leave it running; otherwise don't end your turn until you write completed, blocked or failed."
+
+// progressNextFor returns the progress response's next for the agent's kind:
+// workers on self-waking kinds may end the turn after naming their background
+// command; every other kind keeps waiting in the foreground.
+func progressNextFor(kind AgentKind) string {
+	if kind == Claude || kind == Muse {
+		return progressKeepWorkingSelfWakeNext
+	}
+	return progressKeepWorkingNext
+}
+
 const tddMissingCopy = `TDD evidence missing: record the failing test run (phase: "red", ok: false) before the passing run (phase: "green", ok: true) in this round.`
 const pausedTool = "paused: finish your handoff and stop."
 
@@ -2092,7 +2110,7 @@ func (s *Store) WriteCheckpoint(ctx context.Context, sessionID string, in Checkp
 		// still reach the orchestrator exactly as today.
 		// Only coder-type run steps emit progress; reviewers are excluded.
 		if hasRun && in.Kind == Progress && run.Role != "reviewer" && run.Role != "ui_reviewer" {
-			out.Next = progressKeepWorkingNext
+			out.Next = progressNextFor(a.Kind)
 		}
 		suppressed := hasRun && (in.Kind == Accepted || in.Kind == Progress || in.Kind == CompletedCkp)
 		// The enqueue itself lives below, after the final revision is
