@@ -93,6 +93,25 @@ func (r liveRow) lastActivity() time.Time {
 	return r.StartedAt
 }
 
+// notSupersededSQL is the shared "effective terminal checkpoint" fragment
+// (BUG-170): a completed/failed checkpoint (alias c) counts as the agent
+// being done only while no later agent-written checkpoint of another kind
+// against the same item exists in the same scope. scope is the column that
+// bounds "the same run": "attempt" for the reconciler, "session_id" for slot
+// counting. Without it an agent that kept working after a declined
+// completed (SPIKE-82's no-change close) read as finished: the busy cap
+// killed its live pane, its dead pane read as completed, a restart minted a
+// new agent, and it stopped holding a slot. A daemon-written checkpoint
+// (pause/handoff notes) never supersedes, and neither does a later
+// completed/failed (the newest terminal one is what counts).
+func notSupersededSQL(c, scope string) string {
+	return `NOT EXISTS (SELECT 1 FROM checkpoints sup WHERE sup.agent_id = ` + c + `.agent_id
+			AND sup.item_id = ` + c + `.item_id AND sup.` + scope + ` = ` + c + `.` + scope + `
+			AND sup.daemon_written = 0 AND sup.kind NOT IN ('completed', 'failed')
+			AND (sup.created_at > ` + c + `.created_at
+				OR (sup.created_at = ` + c + `.created_at AND sup.rowid > ` + c + `.rowid)))`
+}
+
 // liveSessionRows loads every session in a live state (§5's LiveStates).
 func (s *Store) liveSessionRows(ctx context.Context) ([]liveRow, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT ses.id, ses.agent_id, a.name, ses.tmux_name,
@@ -100,7 +119,8 @@ func (s *Store) liveSessionRows(ctx context.Context) ([]liveRow, error) {
 		ses.state, ses.attempt, ses.waiting, ses.started_at, ses.last_seen_at,
 		(SELECT MAX(created_at) FROM checkpoints c
 			WHERE c.agent_id = a.id AND c.attempt = ses.attempt AND c.kind = 'completed'
-			  AND c.item_id = a.item_id AND (a.role <> 'orchestrator' OR c.daemon_written = 0)),
+			  AND c.item_id = a.item_id AND (a.role <> 'orchestrator' OR c.daemon_written = 0)
+			  AND `+notSupersededSQL("c", "attempt")+`),
 		lc.id, lc.kind, lc.created_at, lc.summary, lc.next_json
 		FROM sessions ses JOIN agents a ON a.id = ses.agent_id JOIN items i ON i.id = a.item_id
 		LEFT JOIN checkpoints lc ON lc.id = (
