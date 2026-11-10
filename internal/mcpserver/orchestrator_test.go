@@ -2967,3 +2967,33 @@ func TestItemsToolUpdateRefusesReposOnOwnRoot(t *testing.T) {
 		t.Fatalf("refused update changed the root: before %+v after %+v", before, after)
 	}
 }
+
+// BUG-171: repos can be set only at create on a story/task, and swarm_repos
+// edits only the caller's own root, so the refusal for those must not point
+// the caller at swarm_repos.
+func TestItemsToolUpdateRefusesReposOnChildAndOtherRootAsCreateOnly(t *testing.T) {
+	s, seed := newOrchestratorServer(t)
+	ctx := context.Background()
+	otherRoot := seedOtherRoot(t, s)
+	for name, key := range map[string]string{"task": seed.TaskKey, "story": seed.StoryKey, "other root": otherRoot} {
+		before, err := s.RT.Items.Get(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = s.call(ctx, seed.Caller, "swarm_items", fmt.Sprintf(
+			`{"op":"update","key":%q,"revision":%d,"repos":[%q]}`, key, before.Revision, seed.RepoID))
+		if err == nil {
+			t.Fatalf("%s: update with repos succeeded; it must be refused", name)
+		}
+		if !strings.Contains(err.Error(), "only at create") || strings.Contains(err.Error(), "swarm_repos") {
+			t.Fatalf("%s: err = %q, want a create-only message without a swarm_repos hint", name, err)
+		}
+		after, err := s.RT.Items.Get(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if after.Revision != before.Revision || strings.Join(after.Repos, ",") != strings.Join(before.Repos, ",") {
+			t.Fatalf("%s: refused update changed the item: before %+v after %+v", name, before, after)
+		}
+	}
+}
