@@ -507,7 +507,8 @@ func (s *Store) withdrawOrphanedRequests(ctx context.Context) error {
 }
 
 // terminalCheckpointKind is the most recent completed/failed checkpoint
-// against the agent's OWN item for this attempt, if any. A completed/failed
+// against the agent's OWN item for this attempt, if any, that no later
+// agent-written checkpoint superseded (notSupersededSQL). A completed/failed
 // checkpoint against a child item (an orchestrator's routine board
 // bookkeeping) does not count: it says nothing about whether the agent's own
 // assignment is done.
@@ -517,6 +518,7 @@ func (s *Store) terminalCheckpointKind(ctx context.Context, agentID, itemID stri
 	err := s.DB.QueryRowContext(ctx, `SELECT c.kind FROM checkpoints c JOIN agents a ON a.id = c.agent_id
 		WHERE c.agent_id = ? AND c.item_id = ? AND c.attempt = ? AND c.kind IN ('completed', 'failed')
 		  AND (a.role <> 'orchestrator' OR c.daemon_written = 0)
+		  AND `+notSupersededSQL("c", "attempt")+`
 		ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1`, agentID, itemID, attempt).Scan(&kind)
 	if err == sql.ErrNoRows {
 		return "", false, nil
