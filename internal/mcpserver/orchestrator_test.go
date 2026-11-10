@@ -3055,3 +3055,14 @@ func TestItemsToolUpdateStillAppliesTitleAndStatus(t *testing.T) {
 		t.Fatalf("item = %+v", got)
 	}
 }
+
+// BUG-171: the swarm_items description tells the caller which fields update
+// does not change and where to go instead.
+func TestItemsToolDescriptionListsCreateOnlyFields(t *testing.T) {
+	d := itemsTool(nil).Description
+	for _, want := range []string{"repos", "parent", "type", "intent", "role_hint", "only at create", "swarm_repos", "op link"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("swarm_items description missing %q: %q", want, d)
+		}
+	}
+}

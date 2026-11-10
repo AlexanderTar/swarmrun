@@ -166,8 +166,9 @@ func itemsTool(s *Server) ToolDef {
 	return ToolDef{
 		Name: "swarm_items",
 		Description: "Create or update an item, or link/unlink a dependency, inside your own top-level item's " +
-			"tree. Omitting \"parent\" on create proposes a brand-new top-level item (epic/bug/chore/spike) " +
-			"instead -- only a top-level orchestrator may do this; it always starts Draft, and the user starts it.",
+			"tree. Omitting \"parent\" on create proposes a new top-level item (epic/bug/chore/spike); only a " +
+			"top-level orchestrator may, and it starts Draft. Update refuses repos, parent, type, intent and " +
+			"role_hint (only at create; root repos: swarm_repos) and blocked_by (use op link / op unlink).",
 		Roles: orchestratorRole,
 		Schema: objSchemaRequired(`"op":{"type":"string","enum":["create","update","link","unlink"]},
 			"key":{"type":"string"},"parent":{"type":"string"},"type":{"type":"string"},
