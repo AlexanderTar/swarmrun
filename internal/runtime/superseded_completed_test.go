@@ -376,25 +376,35 @@ func TestDeclinedCloseSpikeClearsTheCompletedMarkerUntilItCompletesAgain(t *test
 		t.Fatal("spike session not among the live rows")
 		return false
 	}
-	s.WriteCheckpoint(ctx, ses.ID, CheckpointInput{Kind: Accepted, Summary: "starting"})
+	if _, err := s.WriteCheckpoint(ctx, ses.ID, CheckpointInput{Kind: Accepted, Summary: "starting"}); err != nil {
+		t.Fatal(err)
+	}
 	at.Advance(time.Minute)
-	s.WriteCheckpoint(ctx, ses.ID, CheckpointInput{Kind: CompletedCkp, Summary: "nothing", Resolution: "no_change"})
+	if _, err := s.WriteCheckpoint(ctx, ses.ID, CheckpointInput{Kind: CompletedCkp, Summary: "nothing", Resolution: "no_change"}); err != nil {
+		t.Fatal(err)
+	}
 	if !marker() {
 		t.Fatal("a completed with an open close request must set the marker")
 	}
 	var reqID string
-	s.DB.QueryRowContext(ctx, `SELECT id FROM requests WHERE kind = 'close_spike'`).Scan(&reqID)
+	if err := s.DB.QueryRowContext(ctx, `SELECT id FROM requests WHERE kind = 'close_spike'`).Scan(&reqID); err != nil {
+		t.Fatal(err)
+	}
 	at.Advance(time.Minute)
 	if _, err := s.RequestChanges(ctx, reqID, "Look at the session cookie path first.", "board"); err != nil {
 		t.Fatal(err)
 	}
 	at.Advance(time.Second)
-	s.WriteCheckpoint(ctx, ses.ID, CheckpointInput{Kind: Progress, Summary: "looking at cookies"})
+	if _, err := s.WriteCheckpoint(ctx, ses.ID, CheckpointInput{Kind: Progress, Summary: "looking at cookies"}); err != nil {
+		t.Fatal(err)
+	}
 	if marker() {
 		t.Fatal("a declined close must clear the completed marker")
 	}
 	at.Advance(time.Minute)
-	s.WriteCheckpoint(ctx, ses.ID, CheckpointInput{Kind: CompletedCkp, Summary: "still nothing", Resolution: "no_change"})
+	if _, err := s.WriteCheckpoint(ctx, ses.ID, CheckpointInput{Kind: CompletedCkp, Summary: "still nothing", Resolution: "no_change"}); err != nil {
+		t.Fatal(err)
+	}
 	if !marker() {
 		t.Fatal("a new completed after the decline must set the marker again")
 	}

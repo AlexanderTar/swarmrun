@@ -506,9 +506,9 @@ func (s *Store) withdrawOrphanedRequests(ctx context.Context) error {
 
 // terminalCheckpointKind is the most recent completed/failed checkpoint
 // against the agent's OWN item for this attempt, if any, whose close the user
-// did not decline (notSupersededSQL). A completed/failed checkpoint against a child item (an orchestrator's routine board
-// bookkeeping) does not count: it says nothing about whether the agent's own
-// assignment is done.
+// did not decline (notSupersededSQL). A completed/failed checkpoint against a
+// child item (an orchestrator's routine board bookkeeping) does not count: it
+// says nothing about whether the agent's own assignment is done.
 func (s *Store) terminalCheckpointKind(ctx context.Context, agentID, itemID string, attempt int) (CheckpointKind, bool, error) {
 	var kind string
 	// An orchestrator's completed counts only when it wrote it (CHORE-172).
