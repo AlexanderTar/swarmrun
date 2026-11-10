@@ -34,6 +34,12 @@ type busyState struct {
 	idleAt      time.Time // earliest time tools dropped to 0 since the last ToolStarted; zero while a call is open
 	leaderSince time.Time // first poll that saw the grok leader "working" (up to one tick after it started); zero when idle
 	paneSince   time.Time // first reconcile tick whose pane showed the adapter's busy footer and no dialog; zero otherwise
+	// bgFirstSeen/bgLastSeen track the adapter's background-running pane
+	// signal (BUG-172), sampled on the reconcile tick. The row disappearing
+	// freezes last-seen; the stall alerts then need a quiet window before
+	// they fire. Deliberately outside BusySince/BusyNow.
+	bgFirstSeen time.Time // first tick whose pane showed a running background command; zero when never seen
+	bgLastSeen  time.Time // most recent such tick
 	shown       bool      // busy_since was last published as shown on the board (agent.changed)
 	waiting     int       // pending messages as of that publish, shown with the busy label
 }
@@ -196,6 +202,68 @@ func (s *Store) samplePaneBusy(sessionID string, ad adapter.Adapter, capture str
 	case b.paneSince.IsZero():
 		b.paneSince = s.Now()
 	}
+}
+
+// sampleBackgroundRunning samples the adapter's background-running pane
+// signal on the reconcile tick, like samplePaneBusy. Kinds without the
+// BackgroundWaker capability, or with a nil regex, leave no trace.
+// Deliberately OUT of BusySince/BusyNow: no busy label, no progress-reminder
+// clock, no urgent-interrupt change.
+func (s *Store) sampleBackgroundRunning(sessionID string, ad adapter.Adapter, capture string) {
+	bw, ok := ad.(adapter.BackgroundWaker)
+	if !ok {
+		return
+	}
+	bz := bw.BackgroundRunning()
+	if bz == nil {
+		return
+	}
+	if !bz.MatchString(adapter.StripANSI(capture)) {
+		return // the row disappeared: last-seen freezes, the quiet window runs
+	}
+	now := s.Now()
+	s.bookkeepingMu.Lock()
+	defer s.bookkeepingMu.Unlock()
+	b := s.busy[sessionID]
+	if b == nil {
+		if s.busy == nil {
+			s.busy = map[string]*busyState{}
+		}
+		b = &busyState{}
+		s.busy[sessionID] = b
+	}
+	if b.bgFirstSeen.IsZero() {
+		b.bgFirstSeen = now
+	}
+	b.bgLastSeen = now
+}
+
+// backgroundHold reports the background-command hold on the stall alerts for
+// one session. suppress is true while a background command the harness will
+// wake the agent for is live (or went quiet less than progressDeadlockTimeout
+// ago) and inside the busyCeiling cap from first-seen: progress_deadlock and
+// agent.stale stay quiet. hint is true while the pane signal was seen within
+// the quiet window, whatever the kind's wake fact: the progress_deadlock
+// relay carries it so the orchestrator knows a background command is (or was
+// just) running instead of nudging blindly.
+func (s *Store) backgroundHold(sessionID string, ad adapter.Adapter) (suppress, hint bool) {
+	bw, ok := ad.(adapter.BackgroundWaker)
+	if !ok || bw.BackgroundRunning() == nil {
+		return false, false
+	}
+	now := s.Now()
+	s.bookkeepingMu.Lock()
+	defer s.bookkeepingMu.Unlock()
+	b := s.busy[sessionID]
+	if b == nil || b.bgFirstSeen.IsZero() || b.bgLastSeen.IsZero() {
+		return false, false
+	}
+	if now.Sub(b.bgLastSeen) >= progressDeadlockTimeout {
+		return false, false
+	}
+	hint = true
+	suppress = bw.WakesOnBackgroundExit() && now.Sub(b.bgFirstSeen) < busyCeiling
+	return suppress, hint
 }
 
 // busyAfterPaneLook is the wake tick's own look at the pane, taken only when it is

@@ -607,6 +607,14 @@ func (s *Store) checkProgressDeadlock(ctx context.Context, r liveRow) error {
 		s.busyWithinCeiling(r.SessionID) { // an open tool call under an idle-looking pane is working, not deadlocked
 		return nil
 	}
+	// BUG-172: a background command the harness will wake the agent for is a
+	// pending wake source, not a deadlock. Suppression ends at the busyCeiling
+	// cap from first-seen, and the relay then carries background_running so
+	// the orchestrator checks the command instead of nudging blindly.
+	ad, _ := s.Adapters[r.Kind]
+	if suppress, _ := s.backgroundHold(r.SessionID, ad); suppress {
+		return nil
+	}
 	already, err := s.alreadyRelayedForCheckpoint(ctx, r.LastCheckpointID)
 	if err != nil {
 		return err
@@ -621,9 +629,13 @@ func (s *Store) checkProgressDeadlock(ctx context.Context, r liveRow) error {
 	if !ok {
 		return nil
 	}
-	payload, err := json.Marshal(map[string]any{"event": "progress_deadlock",
+	event := map[string]any{"event": "progress_deadlock",
 		"agent": r.AgentName, "item": r.ItemKey,
-		"checkpoint": map[string]any{"summary": r.LastCheckpointSummary, "next": r.LastCheckpointNext}})
+		"checkpoint": map[string]any{"summary": r.LastCheckpointSummary, "next": r.LastCheckpointNext}}
+	if _, hint := s.backgroundHold(r.SessionID, ad); hint {
+		event["background_running"] = true
+	}
+	payload, err := json.Marshal(event)
 	if err != nil {
 		return err
 	}
@@ -1209,6 +1221,7 @@ func (s *Store) resolveAlive(ctx context.Context, r liveRow, p Pane) error {
 		// Dialog matching below keeps the pane read: a hook cannot see a question.
 		turnOver = s.SessionIdle(r.SessionID, ad, capture)
 		s.samplePaneBusy(r.SessionID, ad, capture)
+		s.sampleBackgroundRunning(r.SessionID, ad, capture)
 		if o, ok := ad.(interface {
 			ObserveCapture(sessionID, capture string)
 		}); ok {
@@ -1345,7 +1358,11 @@ func (s *Store) resolveAlive(ctx context.Context, r liveRow, p Pane) error {
 			return s.notifyNoAck(ctx, r)
 		}
 	}
-	if s.Now().Sub(r.lastActivity()) >= staleAfter && !s.busyWithinCeiling(r.SessionID) {
+	// BUG-172: same hold as progress_deadlock above -- an agent waiting on its
+	// own background command is not stale while the pane signal is seen (or
+	// went quiet less than progressDeadlockTimeout ago), inside the cap.
+	bgSuppress, _ := s.backgroundHold(r.SessionID, ad)
+	if s.Now().Sub(r.lastActivity()) >= staleAfter && !s.busyWithinCeiling(r.SessionID) && !bgSuppress {
 		already, err := s.alreadyNotifiedStale(ctx, r.AgentID, r.lastActivity())
 		if err != nil {
 			return err
