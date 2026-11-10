@@ -2934,3 +2934,36 @@ func TestItemsToolUpdateResolvedByAbandonUnmerged(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// BUG-171: swarm_items update decoded "repos" but never applied it, so the
+// call passed the revision check, wrote nothing and returned the item
+// unchanged as success. Root repos are edited through swarm_repos (its own
+// repos_version counter and active-worktree guard); update must refuse and
+// say so, naming the current repos_version.
+func TestItemsToolUpdateRefusesReposOnOwnRoot(t *testing.T) {
+	s, seed := newOrchestratorServer(t)
+	ctx := context.Background()
+	other := seedRepoIn(t, s, "other-repo")
+	before, err := s.RT.Items.Get(ctx, seed.RootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.call(ctx, seed.Caller, "swarm_items", fmt.Sprintf(
+		`{"op":"update","key":%q,"revision":%d,"repos":[%q]}`, seed.RootKey, before.Revision, other))
+	if err == nil {
+		t.Fatal("update with repos on the caller's root succeeded; it must be refused")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "swarm_repos") ||
+		!strings.Contains(msg, fmt.Sprintf("repos_version: %d", before.ReposVersion)) {
+		t.Fatalf("err = %q, want it to name swarm_repos and the current repos_version", msg)
+	}
+	after, err := s.RT.Items.Get(ctx, seed.RootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Revision != before.Revision || after.ReposVersion != before.ReposVersion ||
+		strings.Join(after.Repos, ",") != strings.Join(before.Repos, ",") {
+		t.Fatalf("refused update changed the root: before %+v after %+v", before, after)
+	}
+}

@@ -294,6 +294,15 @@ func itemsTool(s *Server) ToolDef {
 					}
 					return nil, err
 				}
+				if in.Repos != nil {
+					// BUG-171: update never applied repos; refuse instead of
+					// returning the unchanged item as success.
+					if cur, gerr := s.RT.Items.Get(ctx, in.Key); gerr == nil && cur.ID == a.RootItemID {
+						return nil, &items.Error{Code: items.CodeBadRequest, Message: fmt.Sprintf(
+							"repos cannot be changed with swarm_items update. Use swarm_repos with the root's current repos_version: %d.",
+							cur.ReposVersion)}
+					}
+				}
 				p := items.Patch{Revision: revision}
 				if in.Title != "" {
 					p.Title = &in.Title
