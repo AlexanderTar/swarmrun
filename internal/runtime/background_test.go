@@ -12,7 +12,7 @@ import (
 )
 
 // bgSignalAdapter is the Fake with a background-running pane signal: the test
-// stand-in for the claude/muse BackgroundWaker over a canned capture. Kinds
+// stand-in for the claude/muse/grok BackgroundWaker over a canned capture. Kinds
 // mapped to the plain Fake have no BackgroundWaker and keep the stall alert.
 type bgSignalAdapter struct {
 	*adapter.Fake
@@ -32,9 +32,20 @@ const (
 
 func selfWaking(kind AgentKind) bool { return kind == Claude || kind == Muse || kind == Grok }
 
+func selfWakingKinds() []AgentKind {
+	var out []AgentKind
+	for _, k := range AgentKinds {
+		if selfWaking(k) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // bgDeadlockSetup spawns the standard progress/deadlock worker (orchestrator
 // plus coder with a progress checkpoint), reassigns the coder to kind, and
-// registers that kind's adapter: a signaling self-wake stub for claude/muse,
+// registers that kind's adapter: a signaling self-wake stub for
+// claude/muse/grok,
 // the plain Fake (no BackgroundWaker) for every other kind.
 func bgDeadlockSetup(t *testing.T, kind AgentKind) (*Store, *fakeTmux, *testClock, Agent, Agent, Session) {
 	t.Helper()
@@ -63,6 +74,20 @@ func bgDeadlockSetup(t *testing.T, kind AgentKind) (*Store, *fakeTmux, *testCloc
 		t.Fatal(err)
 	}
 	return s, tm, at, orch, w, wSes
+}
+
+// tickThrough advances the clock by d in reconcile ticks under the quiet
+// window, so a pane signal that stays on screen is seen continuously (one big
+// jump would read as the command going quiet and a new one starting).
+func tickThrough(t *testing.T, s *Store, at *testClock, d time.Duration) {
+	t.Helper()
+	const step = 4 * time.Minute
+	for ; d > step; d -= step {
+		at.Advance(step)
+		reconcileOnce(t, s)
+	}
+	at.Advance(d)
+	reconcileOnce(t, s)
 }
 
 func bgDeadlockRelays(t *testing.T, s *Store, orch Agent) int {
@@ -114,7 +139,7 @@ func TestDeadlockFiresWithoutBackgroundSignal(t *testing.T) {
 // hookless wake gap, and a command that exited without ever waking its
 // agent), then it fires.
 func TestDeadlockFiresAfterBackgroundSignalGoesQuiet(t *testing.T) {
-	for _, kind := range []AgentKind{Claude, Muse} {
+	for _, kind := range selfWakingKinds() {
 		t.Run(string(kind), func(t *testing.T) {
 			s, tm, at, orch, w, _ := bgDeadlockSetup(t, kind)
 			showPane(tm, w.Name, bgRunningCapture)
@@ -143,13 +168,12 @@ func TestDeadlockFiresAfterBackgroundSignalGoesQuiet(t *testing.T) {
 // and the relay says a background command was running so the orchestrator
 // checks it instead of nudging blindly.
 func TestDeadlockFiresPastBackgroundCapWithPayload(t *testing.T) {
-	for _, kind := range []AgentKind{Claude, Muse} {
+	for _, kind := range selfWakingKinds() {
 		t.Run(string(kind), func(t *testing.T) {
 			s, tm, at, orch, w, _ := bgDeadlockSetup(t, kind)
 			showPane(tm, w.Name, bgRunningCapture)
 			reconcileOnce(t, s)
-			at.Advance(busyCeiling + time.Minute)
-			reconcileOnce(t, s)
+			tickThrough(t, s, at, busyCeiling+time.Minute)
 			var payload string
 			if err := s.DB.QueryRowContext(context.Background(), `SELECT payload_json FROM messages
 				WHERE to_agent_id = ? AND kind = 'relay' AND payload_json LIKE '%"event":"progress_deadlock"%'`,
@@ -163,8 +187,70 @@ func TestDeadlockFiresPastBackgroundCapWithPayload(t *testing.T) {
 	}
 }
 
+// The 60-minute cap counts from the start of the current background episode,
+// not from the first command the session ever showed: a second long command,
+// started after the first one went quiet for longer than the quiet window,
+// gets its own hold even when it starts more than an hour after the first.
+func TestBackgroundCapRestartsForANewCommand(t *testing.T) {
+	for _, kind := range selfWakingKinds() {
+		t.Run(string(kind), func(t *testing.T) {
+			s, tm, at, orch, w, wSes := bgDeadlockSetup(t, kind)
+			showPane(tm, w.Name, bgRunningCapture) // command A
+			reconcileOnce(t, s)
+			showPane(tm, w.Name, bgIdleCapture) // A exits
+			at.Advance(10 * time.Minute)
+			reconcileOnce(t, s)
+			at.Advance(110 * time.Minute)
+			showPane(tm, w.Name, bgRunningCapture) // command B, t=120m
+			reconcileOnce(t, s)
+			if _, err := s.WriteCheckpoint(context.Background(), wSes.ID,
+				CheckpointInput{Kind: Progress, Summary: "running suite B in the background"}); err != nil {
+				t.Fatal(err)
+			}
+			before := bgDeadlockRelays(t, s, orch)
+			at.Advance(6 * time.Minute)
+			reconcileOnce(t, s)
+			if got := bgDeadlockRelays(t, s, orch); got != before {
+				t.Fatalf("%s while command B runs: %d new progress_deadlock relays, want 0", kind, got-before)
+			}
+		})
+	}
+}
+
+// A kind that shows the signal but has no wake fact keeps the alert, and the
+// relay carries background_running so the orchestrator checks the command.
+func TestDeadlockCarriesBackgroundHintForNonWakingKind(t *testing.T) {
+	s, tm, at, orch, w, _ := bgDeadlockSetup(t, Codex)
+	s.Adapters[Codex] = &bgSignalAdapter{Fake: s.Adapters[Fake].(*adapter.Fake),
+		signal: regexp.MustCompile("BACKGROUND_TASK_RUNNING"), wake: false}
+	showPane(tm, w.Name, bgRunningCapture)
+	reconcileOnce(t, s)
+	at.Advance(6 * time.Minute)
+	reconcileOnce(t, s)
+	var payloads []string
+	rows, err := s.DB.QueryContext(context.Background(), `SELECT payload_json FROM messages
+		WHERE to_agent_id = ? AND kind = 'relay' AND payload_json LIKE '%"event":"progress_deadlock"%'`, orch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			t.Fatal(err)
+		}
+		payloads = append(payloads, p)
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("non-waking kind with background signal: %d relays, want 1", len(payloads))
+	}
+	if !strings.Contains(payloads[0], `"background_running":true`) {
+		t.Fatalf("relay payload missing background_running: %s", payloads[0])
+	}
+}
+
 // bgStaleSetup starts a lone spike worker reassigned to kind with that kind's
-// adapter (signaling stub for claude/muse, plain Fake otherwise).
+// adapter (signaling stub for claude/muse/grok, plain Fake otherwise).
 func bgStaleSetup(t *testing.T, kind AgentKind) (*Store, *fakeTmux, *testClock, string) {
 	t.Helper()
 	s, tm, _ := newStore(t)
@@ -207,7 +293,7 @@ func TestBackgroundSignalSuppressesStaleForSelfWakingKinds(t *testing.T) {
 }
 
 func TestStaleFiresAfterBackgroundSignalGoesQuiet(t *testing.T) {
-	for _, kind := range []AgentKind{Claude, Muse} {
+	for _, kind := range selfWakingKinds() {
 		t.Run(string(kind), func(t *testing.T) {
 			s, tm, at, name := bgStaleSetup(t, kind)
 			showPane(tm, name, bgRunningCapture)
@@ -227,13 +313,12 @@ func TestStaleFiresAfterBackgroundSignalGoesQuiet(t *testing.T) {
 }
 
 func TestStaleFiresPastBackgroundCap(t *testing.T) {
-	for _, kind := range []AgentKind{Claude, Muse} {
+	for _, kind := range selfWakingKinds() {
 		t.Run(string(kind), func(t *testing.T) {
 			s, tm, at, name := bgStaleSetup(t, kind)
 			showPane(tm, name, bgRunningCapture)
 			reconcileOnce(t, s)
-			at.Advance(busyCeiling + time.Minute)
-			reconcileOnce(t, s)
+			tickThrough(t, s, at, busyCeiling+time.Minute)
 			if got := notifiedCount(s, "agent.stale"); got != 1 {
 				t.Fatalf("%s past the cap: %d stale alerts, want 1", kind, got)
 			}
@@ -244,7 +329,7 @@ func TestStaleFiresPastBackgroundCap(t *testing.T) {
 // The background signal stays out of the busy readout: no busy label, no
 // 15-minute progress reminder clock, no urgent-interrupt change.
 func TestBackgroundSignalLeavesBusySinceAlone(t *testing.T) {
-	for _, kind := range []AgentKind{Claude, Muse} {
+	for _, kind := range selfWakingKinds() {
 		t.Run(string(kind), func(t *testing.T) {
 			s, tm, _, name := bgStaleSetup(t, kind)
 			showPane(tm, name, bgRunningCapture)
@@ -262,7 +347,7 @@ func TestBackgroundSignalLeavesBusySinceAlone(t *testing.T) {
 }
 
 // BUG-172: the progress response's next tells a worker on a self-waking kind
-// (claude, muse) it may end the turn after naming its background command and
+// (claude, muse, grok) it may end the turn after naming its background command and
 // must not poll; every other kind keeps waiting in the foreground.
 func TestProgressNextDiffersForSelfWakingKinds(t *testing.T) {
 	for _, tc := range []struct {

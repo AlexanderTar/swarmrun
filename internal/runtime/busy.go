@@ -232,7 +232,9 @@ func (s *Store) sampleBackgroundRunning(sessionID string, ad adapter.Adapter, ca
 		b = &busyState{}
 		s.busy[sessionID] = b
 	}
-	if b.bgFirstSeen.IsZero() {
+	// A sighting after a full quiet window starts a new episode, so the cap
+	// counts per background command, not from the session's first one.
+	if b.bgFirstSeen.IsZero() || now.Sub(b.bgLastSeen) >= progressDeadlockTimeout {
 		b.bgFirstSeen = now
 	}
 	b.bgLastSeen = now
