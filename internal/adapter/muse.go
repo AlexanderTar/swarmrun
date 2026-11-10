@@ -462,6 +462,13 @@ var (
 		"(?:\x1b\\[[0-9;?]*[A-Za-z]|\\s)*$" +
 		"|(?:\x1b\\[[0-9;?]*[A-Za-z]|\\s)*(?:\x1b\\[2m|\x1b\\[38;2;(?:103;108;116|124;130;138|138;144;152)m)[^\n]*$)")
 	museBusy = regexp.MustCompile(`(?m)^[^\n]*[◈◇][^\n]*interrupt[^\n]*$`)
+	// BUG-172: the task row under the composer while a background command
+	// runs, e.g. "└ ◈ Start background wake probe sleep  running  6m 22s"
+	// (the glyph alternates ◈/◆). A finished row ("◆ Finished · <desc> · ✓")
+	// names no "running" and does not match; neither does a transcript line
+	// mentioning running, which never starts with "└ ". Fixtures in
+	// testdata/muse/pane-background-{running,finished}.txt.
+	museBackgroundRunning = regexp.MustCompile(`(?m)^└ [◈◆][^\n]* running +\d`)
 	// museQuestionDialog marks Muse's request_user_input dialog. Its footer,
 	// from the 1.4.0 probe: "Enter to select · ↑/↓ to move · Tab for an
 	// optional note". With it on screen a paste is unsafe: typed letters move
@@ -506,6 +513,12 @@ func (m *Muse) ProcessNames() []*regexp.Regexp { return museProcess }
 func (m *Muse) IdlePrompt() *regexp.Regexp     { return museIdle }
 func (m *Muse) Busy() *regexp.Regexp           { return museBusy }
 func (m *Muse) Idle(capture string) bool       { return idle(m, capture) }
+
+// BackgroundRunning and WakesOnBackgroundExit implement BackgroundWaker:
+// Muse re-invokes an idle agent when its background task exits (proven live
+// 2026-11-10, research BUG-172/background-wake.md).
+func (m *Muse) BackgroundRunning() *regexp.Regexp { return museBackgroundRunning }
+func (m *Muse) WakesOnBackgroundExit() bool       { return true }
 
 // PasteReady is the wake-paste gate (runtime tryPaste). Muse 1.4.14 steers the
 // running turn with a line submitted mid-turn (footer "steering the running

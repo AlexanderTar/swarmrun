@@ -208,6 +208,21 @@ type StartupStaller interface {
 	StartupStallTimeout() time.Duration
 }
 
+// BackgroundWaker is an optional Adapter capability for kinds whose harness
+// re-invokes an idle agent when its background command exits (BUG-172). Only
+// kinds with a proven-live idle wake implement it: claude and muse, probed
+// 2026-11-10 (research BUG-172/background-wake.md). Grok's docs claim a wake
+// but no live idle wake was recorded; codex, cursor and agy have none. Those
+// kinds leave this out entirely and keep the stall alert.
+type BackgroundWaker interface {
+	// BackgroundRunning matches an idle pane whose background command is
+	// still running. Nil means the kind reports no signal.
+	BackgroundRunning() *regexp.Regexp
+	// WakesOnBackgroundExit reports whether the harness wakes an idle agent
+	// when the background command exits. Only proven-live kinds say true.
+	WakesOnBackgroundExit() bool
+}
+
 // base carries what every adapter needs and supplies the shared Idle rule.
 type base struct {
 	d    Deps

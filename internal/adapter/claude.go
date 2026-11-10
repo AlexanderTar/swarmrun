@@ -481,16 +481,30 @@ var (
 	claudeIdle = regexp.MustCompile("(?m)^(?:\x1b\\[[0-9;]*m)*\u276f[\u00a0 ]" +
 		"(?:\x1b\\[2m.*|(?:\x1b\\[[0-9;]*m)*\x1b\\[7m(?:\x1b\\[[0-9;]*m)*[ \u00a0]?(?:\x1b\\[[0-9;]*m)*)?\\s*$")
 	// P0-4: the spinner, e.g. "✽ Beboppin'… (48s · ↓ 114 tokens)".
-	claudeBusy     = regexp.MustCompile("(?m)^[\u273b\u273d\u2736\u2722\u2733\u00b7*] \\S+(?: \\S+)*\u2026 \\(")
-	claudeTrust    = regexp.MustCompile(`Is this a project you created or one you trust\?`)
-	claudeTrustYes = regexp.MustCompile(`Yes, I trust this folder`)
-	claudeDev      = regexp.MustCompile(`I am using this for local development`)
+	claudeBusy = regexp.MustCompile("(?m)^[\u273b\u273d\u2736\u2722\u2733\u00b7*] \\S+(?: \\S+)*\u2026 \\(")
+	// BUG-172: the idle mode line while a background shell runs, e.g.
+	// "⏵⏵ bypass permissions on · 1 shell". Only the mode line counts: the
+	// turn-summary line above it ("✻ Worked for 27s · done 4:19 PM · 1 shell
+	// still running") also names the shell count, but the captures cannot
+	// prove it clears on exit, while the mode line provably drops the count
+	// (background-wake.md's probe, tick 6). Fixtures in
+	// testdata/claude/pane-background-{running,exited}.txt.
+	claudeBackgroundRunning = regexp.MustCompile(`(?m)^\s*⏵⏵[^\n]*· \d+ shells?\b`)
+	claudeTrust             = regexp.MustCompile(`Is this a project you created or one you trust\?`)
+	claudeTrustYes          = regexp.MustCompile(`Yes, I trust this folder`)
+	claudeDev               = regexp.MustCompile(`I am using this for local development`)
 )
 
 func (c *Claude) ProcessNames() []*regexp.Regexp { return claudeProcess }
 func (c *Claude) IdlePrompt() *regexp.Regexp     { return claudeIdle }
 func (c *Claude) Busy() *regexp.Regexp           { return claudeBusy }
 func (c *Claude) Idle(capture string) bool       { return idle(c, capture) }
+
+// BackgroundRunning and WakesOnBackgroundExit implement BackgroundWaker:
+// Claude Code re-invokes an idle agent when its background shell exits
+// (proven live 2026-11-10, research BUG-172/background-wake.md).
+func (c *Claude) BackgroundRunning() *regexp.Regexp { return claudeBackgroundRunning }
+func (c *Claude) WakesOnBackgroundExit() bool       { return true }
 
 func (c *Claude) StartupDialogs() []Dialog {
 	return []Dialog{
