@@ -83,9 +83,11 @@ unfinished assignment stays recoverable — never mint a suffixed agent; Retry
 or explicit recovery restarts it in place. User Cancel stops execution,
 disables auto-restart, retains recoverable identity. Item/assignment cancel
 is terminal. A valid completed checkpoint with gates satisfied finishes the
-agent, provided no later agent-written checkpoint of another kind on the same
-item and attempt supersedes it (an agent that keeps working after a declined
-close is not finished). Provider exit without an effective completed
+agent, provided the user did not decline it afterwards (a close_spike request
+for that agent and item resolved changes_requested at or after the completed):
+an agent sent back to work after a declined close is not finished and keeps
+its pane, slot and recoverable identity. A plain later checkpoint does not
+undo a completed. Provider exit without an effective completed
 checkpoint is recoverable, not finished.
 
 `StartOrchestrator` on an unfinished assignment resolves the existing logical

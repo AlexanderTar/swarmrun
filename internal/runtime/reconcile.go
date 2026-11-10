@@ -93,29 +93,21 @@ func (r liveRow) lastActivity() time.Time {
 	return r.StartedAt
 }
 
-// notSupersededByAttemptSQL and notSupersededBySessionSQL are the shared
-// "effective terminal checkpoint" fragment (BUG-170): a completed/failed
-// checkpoint (alias c) counts as the agent being done only while no later
-// agent-written checkpoint of another kind against the same item exists in
-// the same scope: the attempt for the reconciler, the writing session for
-// slot counting (limits.go). Without it an agent that kept working after a
-// declined completed (SPIKE-82's no-change close) read as finished: the busy
-// cap killed its live pane, its dead pane read as completed, a restart minted
-// a new agent, and it stopped holding a slot. A daemon-written checkpoint
-// (pause/handoff notes) never supersedes, and neither does a later
-// completed/failed (the newest terminal one is what counts). The two differ
-// only in the scope column; keep them in step.
-const notSupersededByAttemptSQL = `NOT EXISTS (SELECT 1 FROM checkpoints sup WHERE sup.agent_id = c.agent_id
-			AND sup.item_id = c.item_id AND sup.attempt = c.attempt
-			AND sup.daemon_written = 0 AND sup.kind NOT IN ('completed', 'failed')
-			AND (sup.created_at > c.created_at
-				OR (sup.created_at = c.created_at AND sup.rowid > c.rowid)))`
-
-const notSupersededBySessionSQL = `NOT EXISTS (SELECT 1 FROM checkpoints sup WHERE sup.agent_id = c.agent_id
-			AND sup.item_id = c.item_id AND sup.session_id = c.session_id
-			AND sup.daemon_written = 0 AND sup.kind NOT IN ('completed', 'failed')
-			AND (sup.created_at > c.created_at
-				OR (sup.created_at = c.created_at AND sup.rowid > c.rowid)))`
+// notSupersededSQL is the shared "effective terminal checkpoint" fragment
+// (BUG-170): a completed/failed checkpoint (alias c) counts as the agent being
+// done unless the user declined it afterwards. The durable signal is a
+// close_spike request of the same agent and item that a human resolved as
+// changes_requested at or after the checkpoint: the agent was sent back to
+// work and keeps going in the same session and attempt (SPIKE-82's no-change
+// close). Without it the busy cap killed the live pane, its dead pane read as
+// completed, a restart minted a new agent, and it stopped holding a slot.
+// A plain later checkpoint does NOT supersede: finished agents often write a
+// stray note after their completed, and those must still be killed, relayed
+// as done and release their slot. A new completed after the decline is newer
+// than the decline and counts again.
+const notSupersededSQL = `NOT EXISTS (SELECT 1 FROM requests rq WHERE rq.agent_id = c.agent_id
+			AND rq.item_id = c.item_id AND rq.kind = 'close_spike' AND rq.state = 'changes_requested'
+			AND rq.responded_at >= c.created_at)`
 
 // liveSessionRows loads every session in a live state (§5's LiveStates).
 func (s *Store) liveSessionRows(ctx context.Context) ([]liveRow, error) {
@@ -125,7 +117,7 @@ func (s *Store) liveSessionRows(ctx context.Context) ([]liveRow, error) {
 		(SELECT MAX(created_at) FROM checkpoints c
 			WHERE c.agent_id = a.id AND c.attempt = ses.attempt AND c.kind = 'completed'
 			  AND c.item_id = a.item_id AND (a.role <> 'orchestrator' OR c.daemon_written = 0)
-			  AND `+notSupersededByAttemptSQL+`),
+			  AND `+notSupersededSQL+`),
 		lc.id, lc.kind, lc.created_at, lc.summary, lc.next_json
 		FROM sessions ses JOIN agents a ON a.id = ses.agent_id JOIN items i ON i.id = a.item_id
 		LEFT JOIN checkpoints lc ON lc.id = (
@@ -512,8 +504,8 @@ func (s *Store) withdrawOrphanedRequests(ctx context.Context) error {
 }
 
 // terminalCheckpointKind is the most recent completed/failed checkpoint
-// against the agent's OWN item for this attempt, if any, that no later
-// agent-written checkpoint superseded (notSupersededByAttemptSQL). A completed/failed
+// against the agent's OWN item for this attempt, if any, that the user did
+// not decline afterwards (notSupersededSQL). A completed/failed
 // checkpoint against a child item (an orchestrator's routine board
 // bookkeeping) does not count: it says nothing about whether the agent's own
 // assignment is done.
@@ -523,7 +515,7 @@ func (s *Store) terminalCheckpointKind(ctx context.Context, agentID, itemID stri
 	err := s.DB.QueryRowContext(ctx, `SELECT c.kind FROM checkpoints c JOIN agents a ON a.id = c.agent_id
 		WHERE c.agent_id = ? AND c.item_id = ? AND c.attempt = ? AND c.kind IN ('completed', 'failed')
 		  AND (a.role <> 'orchestrator' OR c.daemon_written = 0)
-		  AND `+notSupersededByAttemptSQL+`
+		  AND `+notSupersededSQL+`
 		ORDER BY c.created_at DESC, c.rowid DESC LIMIT 1`, agentID, itemID, attempt).Scan(&kind)
 	if err == sql.ErrNoRows {
 		return "", false, nil

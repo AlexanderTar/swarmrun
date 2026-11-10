@@ -29,6 +29,8 @@ func TestSupersededCompletedStillHoldsASlot(t *testing.T) {
 	at.Advance(time.Minute)
 	insertAgentCkp(t, s, "ckp_slot_completed", first, ses, CompletedCkp, "done")
 	at.Advance(time.Minute)
+	declineClose(t, s, "req_slot_close", first, ses)
+	at.Advance(time.Second)
 	insertAgentCkp(t, s, "ckp_slot_progress2", first, ses, Progress, "close declined, continuing")
 
 	_, queued, err = s.Spawn(ctx, SpawnInput{ItemKey: "TASK-2", Role: RoleCoder, Kind: Fake,
@@ -38,5 +40,30 @@ func TestSupersededCompletedStillHoldsASlot(t *testing.T) {
 	}
 	if !queued {
 		t.Fatal("the reopened agent must still hold the only slot: second spawn was admitted")
+	}
+}
+
+// A stray note after a genuine completed (no declined close) frees the slot.
+func TestStrayNoteAfterACompletedStillFreesTheSlot(t *testing.T) {
+	s, _, at := clockStore(t)
+	ctx := context.Background()
+	setLimits(t, s, 1)
+	seedEpicWithTwoTasks(t, s)
+	first, _, err := s.Spawn(ctx, SpawnInput{ItemKey: "TASK-1", Role: RoleCoder, Kind: Fake,
+		Model: "fake-1", Brief: BriefInput{Objective: "one"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ses, _ := s.LatestSession(ctx, first.ID)
+	insertAgentCkp(t, s, "ckp_slot_completed", first, ses, CompletedCkp, "done")
+	at.Advance(time.Minute)
+	insertAgentCkp(t, s, "ckp_slot_stray", first, ses, Progress, "Review is done, nothing left to do")
+	_, queued, err := s.Spawn(ctx, SpawnInput{ItemKey: "TASK-2", Role: RoleCoder, Kind: Fake,
+		Model: "fake-1", Brief: BriefInput{Objective: "two"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued {
+		t.Fatal("a genuinely completed agent must free its slot even after a stray note")
 	}
 }
