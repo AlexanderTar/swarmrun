@@ -63,13 +63,18 @@ import (
 // applies the same exclusion: Admit and EnforceCapacity (capacity.go). Both
 // compose it into a query whose outer table is `agents` -- required, since
 // the SQL fragment references `agents.id`/`agents.item_id` unqualified.
+//
+// A completed/failed that a later agent-written checkpoint superseded does not
+// free the slot (BUG-170, notSupersededBySessionSQL): the agent kept
+// working after a declined close.
 const NotAZombieSlot = `NOT EXISTS (
 		SELECT 1 FROM sessions s WHERE s.agent_id = agents.id
 			AND s.generation = (SELECT MAX(generation) FROM sessions WHERE agent_id = agents.id)
 			AND (s.state IN ('interrupted', 'crashed', 'failed', 'paused')
 				OR EXISTS (SELECT 1 FROM checkpoints c WHERE c.agent_id = agents.id
 					AND c.item_id = agents.item_id AND c.session_id = s.id
-					AND c.kind IN ('completed', 'failed'))))`
+					AND c.kind IN ('completed', 'failed')
+					AND ` + notSupersededBySessionSQL + `)))`
 
 // slotHoldersSQL counts every agent occupying a slot in the one
 // max_concurrent_agents pool (spec 2026-09-27-single-agent-limit-live).
