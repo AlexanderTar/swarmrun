@@ -349,6 +349,7 @@ export interface AgentNode {
   preflight_error: string | null; // set when spawn preflight failed (never spawned)
   kind_reason: string | null; // why kind/model isn't the user's role default; null = settings
   replacement?: AgentReplacement; // omitted when no operation is in flight
+  can_retry?: boolean; // a cancelled workflow step agent whose escalated workflow Retry restarts; omitted otherwise
   low_token_effective?: boolean; // low-token mode resolves on for this agent; the board marks orchestrators only
   created_at: number;
   finished_at: number | null;

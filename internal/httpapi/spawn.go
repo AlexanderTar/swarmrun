@@ -205,6 +205,23 @@ func allowedActions(a runtime.Agent, ses *runtime.Session) map[string]bool {
 	}
 }
 
+// actionsFor is allowedActions plus the one action the table can't see: Retry
+// for a cancelled workflow step agent whose workflow is escalated on its run.
+// Cancelling a step escalates its workflow, and Store.Retry restarts the step
+// through it (BUG-173), but a cancelled agent is finished, so the table alone
+// would leave that retry unreachable from the board.
+func (s *Server) actionsFor(ctx context.Context, a runtime.Agent, ses *runtime.Session) map[string]bool {
+	acts := allowedActions(a, ses)
+	if ses != nil && s.cancelledStepRetryable(ctx, a, ses.State) {
+		acts = actionSet("retry")
+	}
+	return acts
+}
+
+func (s *Server) cancelledStepRetryable(ctx context.Context, a runtime.Agent, ses runtime.SessionState) bool {
+	return a.State == runtime.AgentFinished && ses == runtime.Cancelled && s.RT.StepRetryable(ctx, a)
+}
+
 // conflictMessage picks the one §17.3 sentence pinned for a specific refusal;
 // every other refusal gets a generic conflict (no test in this batch checks
 // its exact text).
@@ -224,7 +241,7 @@ func (s *Server) doAction(w http.ResponseWriter, r *http.Request, action string,
 		s.writeErr(w, err)
 		return
 	}
-	if !allowedActions(a, ses)[action] {
+	if !s.actionsFor(ctx, a, ses)[action] {
 		s.writeErr(w, apiErr(http.StatusConflict, "conflict", conflictMessage(ses, action)))
 		return
 	}

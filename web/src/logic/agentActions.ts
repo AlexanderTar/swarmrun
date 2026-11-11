@@ -89,7 +89,8 @@ export const flattenAgents = (nodes: AgentNode[]): AgentNode[] =>
   nodes.flatMap((n) => [n, ...flattenAgents(n.children)]);
 
 export function agentActions(a: AgentNode): AgentAction[] {
-  if (isFinished(a)) return [];
+  // A cancelled step agent finishes, but Retry restarts its escalated workflow step (can_retry).
+  if (isFinished(a)) return a.can_retry ? [{ endpoint: "retry", label: C.retry }] : [];
   const orch = a.role === "orchestrator";
   const live = countLive(a);
   const terminal: AgentAction = { endpoint: "terminal", label: C.terminal };

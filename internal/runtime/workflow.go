@@ -1913,6 +1913,27 @@ func (s *Store) stepRunOf(ctx context.Context, agentID string) (wf wfRow, runSta
 	return wf, runState, ok, err
 }
 
+// stepRetryTarget reports the workflow whose escalation agent a's own
+// cancelled or failed run caused, i.e. the case retryThroughWorkflow restarts.
+func (s *Store) stepRetryTarget(ctx context.Context, a Agent) (wfRow, bool, error) {
+	wf, runState, isStep, err := s.stepRunOf(ctx, a.ID)
+	if err != nil || !isStep {
+		return wfRow{}, false, err
+	}
+	if wf.State != "escalated" || (runState != string(workflow.RunStateCancelled) && runState != string(workflow.RunStateFailed)) {
+		return wfRow{}, false, nil
+	}
+	return wf, true, nil
+}
+
+// StepRetryable reports whether swarm_control retry on a would restart its
+// workflow step, so the board offers Retry for a cancelled step agent only
+// when the Store would accept it.
+func (s *Store) StepRetryable(ctx context.Context, a Agent) bool {
+	_, ok, err := s.stepRetryTarget(ctx, a)
+	return err == nil && ok
+}
+
 // retryThroughWorkflow is swarm_control retry for a workflow step agent whose
 // own cancelled or failed run escalated its workflow (BUG-173, BUG-174). A
 // bare Retry would leave a live agent with no active run row for its
@@ -1921,12 +1942,9 @@ func (s *Store) stepRunOf(ctx context.Context, agentID string) (wf wfRow, runSta
 // run and starts the step. ok=false means this agent isn't in that state and
 // the caller falls through to the ordinary retry rules.
 func (s *Store) retryThroughWorkflow(ctx context.Context, a Agent, note string) (Agent, bool, error) {
-	wf, runState, isStep, err := s.stepRunOf(ctx, a.ID)
-	if err != nil || !isStep {
+	wf, ok, err := s.stepRetryTarget(ctx, a)
+	if err != nil || !ok {
 		return Agent{}, false, err
-	}
-	if wf.State != "escalated" || (runState != string(workflow.RunStateCancelled) && runState != string(workflow.RunStateFailed)) {
-		return Agent{}, false, nil
 	}
 	owner, err := s.agentByID(ctx, wf.OwnerAgentID)
 	if err != nil {

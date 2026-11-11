@@ -73,6 +73,10 @@ type agentNodeWire struct {
 	State       runtime.AgentState `json:"state"`
 	Session     *sessionInfoWire   `json:"session"`
 	Replacement *replacementWire   `json:"replacement,omitempty"`
+	// CanRetry: a cancelled workflow step agent the board may Retry (its
+	// workflow is escalated on it); the table of actions can't be derived
+	// client-side from the display state alone.
+	CanRetry bool `json:"can_retry,omitempty"`
 	// RoleOverrides: the agent's stored worker overrides (omitted when none), so a
 	// client can prefill them on hand-off.
 	RoleOverrides     map[string]roleDefaultBody `json:"role_overrides,omitempty"`
@@ -579,6 +583,7 @@ func (s *Server) agentNodeOut(ctx context.Context, a runtime.Agent, live map[str
 		// Batch 3: the optional in-flight replacement; the existing effort
 		// field above is reused as-is, no new effort surface.
 		w.Replacement = s.replacementFor(ctx, a.ID)
+		w.CanRetry = w.Session != nil && s.cancelledStepRetryable(ctx, a, runtime.SessionState(w.Session.State))
 		if a.Role == runtime.RoleOrchestrator && a.ItemID == a.RootItemID {
 			if todos, err := s.RT.Todos(ctx, a.ItemID); err == nil {
 				w.Progress = runtime.ProgressOf(todos)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -693,4 +694,76 @@ func TestStateShowsABusyWorkerAsBusyNotStale(t *testing.T) {
 		t.Fatalf("busy worker: busy_since=%v stale=%v messages_waiting=%v, want set, false and 1",
 			got["busy_since"], got["stale"], got["messages_waiting"])
 	}
+}
+
+// BUG-173: cancel a workflow step agent, then Retry it from the board. A
+// cancelled agent is finished, so the §10.7 table offered it no actions and
+// the retry-through-workflow path was unreachable from the UI. The board now
+// offers retry for a cancelled step agent whose workflow is escalated on its
+// run (what Store.Retry would accept), and still refuses every other cancelled
+// agent.
+func TestBoardOffersRetryForCancelledEscalatedStepAgent(t *testing.T) {
+	const gateRefusal = "This action isn't available from the current state."
+	s, seed := newRuntimeServer(t)
+
+	var stepID, taskItemID, orchID string
+	if err := s.DB.QueryRowContext(bg, `SELECT id, item_id FROM agents WHERE name = 'task-worker'`).Scan(&stepID, &taskItemID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.QueryRowContext(bg, `SELECT id FROM agents WHERE name = 'root-orchestrator'`).Scan(&orchID); err != nil {
+		t.Fatal(err)
+	}
+	epic, err := s.items.Get(bg, seed.RootKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainID := seedAgent(t, s, runtime.RoleCoder, taskItemID, epic.ID, orchID, "plain-cancelled")
+	seedSession(t, s, plainID, "plain-cancelled", 1, "running")
+
+	now := db.Millis(time.Now())
+	wfID := ids.New("wf")
+	if _, err := s.DB.ExecContext(bg, `INSERT INTO workflows
+		(id, item_id, root_item_id, owner_agent_id, state, round, escalation, worktrees_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, 'escalated', 1, 'step cancelled', '[]', ?, ?)`,
+		wfID, taskItemID, epic.ID, orchID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB.ExecContext(bg, `INSERT INTO workflow_runs
+		(id, workflow_id, step_id, round, role, agent_id, state, created_at)
+		VALUES (?, ?, 'build', 1, 'coder', ?, 'cancelled', ?)`, ids.New("wfr"), wfID, stepID, now); err != nil {
+		t.Fatal(err)
+	}
+	// Cancel's end state: agent finished, latest session cancelled.
+	for _, id := range []string{stepID, plainID} {
+		if _, err := s.DB.ExecContext(bg, `UPDATE agents SET state = 'finished', finished_at = ? WHERE id = ?`, now, id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.DB.ExecContext(bg, `UPDATE sessions SET state = 'cancelled' WHERE agent_id = ?`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The wire tells the client when to draw Retry (the web client hard-codes
+	// its action list by display state, so it needs this to know).
+	rec := s.get(t, "/api/agents?state=all")
+	var nodes []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &nodes); err != nil {
+		t.Fatal(err)
+	}
+	if n := findAgentInTree(nodes, "task-worker"); n == nil || n["can_retry"] != true {
+		t.Fatalf("task-worker can_retry = %v, want true (node %v)", n["can_retry"], n)
+	}
+	if n := findAgentInTree(nodes, "plain-cancelled"); n == nil || n["can_retry"] == true {
+		t.Fatalf("plain-cancelled can_retry = %v, want absent", n["can_retry"])
+	}
+
+	// Retrying moves the workflow out of escalated, so the wire is read first.
+	rec = s.post(t, "/api/agents/plain-cancelled/retry", `{}`)
+	wantErr(t, rec.Code, rec.Body.Bytes(), 409, "conflict", gateRefusal)
+
+	rec = s.post(t, "/api/agents/task-worker/retry", `{}`)
+	if strings.Contains(rec.Body.String(), gateRefusal) {
+		t.Fatalf("retry on a cancelled escalated step agent hit the state gate: %d %s", rec.Code, rec.Body)
+	}
+
 }

@@ -203,6 +203,12 @@ describe("agentActions (§10.7, one case per row)", () => {
       "cancel:Cancel",
     ]);
   });
+  it("cancelled step agent with can_retry: retry only", () => {
+    expect(
+      labels(makeAgent({ state: "finished", can_retry: true, session: session("cancelled") })),
+    ).toEqual(["retry:Retry"]);
+  });
+
   it("completed, cancelled and acknowledged: none", () => {
     expect(labels(makeAgent({ state: "finished", session: session("completed") }))).toEqual([]);
     expect(labels(makeAgent({ state: "finished", session: session("cancelled") }))).toEqual([]);
