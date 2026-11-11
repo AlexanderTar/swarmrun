@@ -2463,6 +2463,21 @@ func (s *Store) Retry(ctx context.Context, name, note, sessionID, requestID stri
 		}
 		return a, nil
 	}
+	// A workflow step agent whose own run escalated the workflow restarts
+	// through the engine, not by a bare Retry (see retryThroughWorkflow).
+	if !ses.State.Live() && ses.State != Paused && ses.State != Stopping {
+		if restarted, routed, err := s.retryThroughWorkflow(ctx, a, note); err != nil {
+			return Agent{}, err
+		} else if routed {
+			if _, err := IdemTx(ctx, s, sessionID, requestID, "swarm_control", &out, func(*sql.Tx) error {
+				out = restarted
+				return nil
+			}); err != nil {
+				return Agent{}, err
+			}
+			return restarted, nil
+		}
+	}
 	// Batch 3: Retry consults the replacement coordinator before the state
 	// guard, so a refused retry names the operation it would race.
 	if err := s.refuseIfOperationInFlight(ctx, a.ID); err != nil {
@@ -2475,7 +2490,7 @@ func (s *Store) Retry(ctx context.Context, name, note, sessionID, requestID stri
 		return s.queueRetryIntent(ctx, a, ses, note, sessionID, requestID)
 	}
 	if !slices.Contains(retryableStates, ses.State) {
-		return Agent{}, &items.Error{Code: items.CodeConflict, Message: notRetryable}
+		return Agent{}, s.retryRefusal(ctx, a, ses)
 	}
 
 	// The one agent limit: a failed/crashed/completed/interrupted predecessor

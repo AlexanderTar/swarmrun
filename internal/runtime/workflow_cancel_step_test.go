@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/AlexanderTar/swarmrun/internal/items"
@@ -269,5 +270,82 @@ func TestResumeRetryRestartsCancelledReviewer(t *testing.T) {
 	}
 	if newState != "active" || newAgent == "" {
 		t.Fatalf("review run at round %d = state %s agent %q, want active with an agent", final.Round, newState, newAgent)
+	}
+}
+
+// BUG-174: swarm_control retry on a cancelled workflow step agent used to
+// refuse ("isn't in a state that can be retried"). A bare Retry would also
+// leave a live agent with no active run row, so it goes through the engine:
+// same effect as swarm_workflow resume retry with the note.
+func TestRetryCancelledStepAgentRestartsThroughWorkflow(t *testing.T) {
+	s, _, _, wfID, coder := startCancelFixture(t)
+	ctx := context.Background()
+	if _, err := s.Cancel(ctx, coder.Name, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := workflowStateOf(t, s, wfID); got != "escalated" {
+		t.Fatalf("setup: workflow state = %s, want escalated", got)
+	}
+
+	got, err := s.Retry(ctx, coder.Name, "carry on from the last commit", "", "")
+	if err != nil {
+		t.Fatalf("Retry on a cancelled step agent: %v", err)
+	}
+	if st := workflowStateOf(t, s, wfID); st != "running" {
+		t.Fatalf("workflow state after Retry = %s, want running", st)
+	}
+	var round1, round2State, round2Agent string
+	if err := s.DB.QueryRowContext(ctx, `SELECT state FROM workflow_runs WHERE workflow_id = ? AND step_id = 'build' AND round = 1`, wfID).Scan(&round1); err != nil {
+		t.Fatal(err)
+	}
+	if round1 != "cancelled" {
+		t.Fatalf("round 1 build run = %s, want cancelled (kept)", round1)
+	}
+	if err := s.DB.QueryRowContext(ctx, `SELECT state, COALESCE(agent_id, '') FROM workflow_runs
+		WHERE workflow_id = ? AND step_id = 'build' AND round = 2`, wfID).Scan(&round2State, &round2Agent); err != nil {
+		t.Fatal(err)
+	}
+	if round2State != "active" || round2Agent == "" {
+		t.Fatalf("round 2 build run = %s agent %q, want active with an agent", round2State, round2Agent)
+	}
+	if got.ID != round2Agent {
+		t.Fatalf("Retry returned agent %s, want the restarted step's agent %s", got.ID, round2Agent)
+	}
+	// The note reaches the restarted step's brief.
+	var brief string
+	if err := s.DB.QueryRowContext(ctx, `SELECT brief FROM agents WHERE id = ?`, round2Agent).Scan(&brief); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(brief, "carry on from the last commit") {
+		t.Fatalf("restarted step's brief lacks the retry note:\n%s", brief)
+	}
+}
+
+// A live agent can't be retried: the refusal names the next step.
+func TestRetryLiveStepAgentRefusalNamesNextStep(t *testing.T) {
+	s, _, _, _, coder := startCancelFixture(t)
+	_, err := s.Retry(context.Background(), coder.Name, "", "", "")
+	if err == nil {
+		t.Fatal("Retry on a live step agent succeeded, want a refusal")
+	}
+	for _, want := range []string{"swarm_control cancel", "swarm_workflow resume"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal %q does not name %q", err, want)
+		}
+	}
+}
+
+// A cancelled agent that is not a workflow step has no retry path either; the
+// refusal says to spawn a replacement.
+func TestRetryCancelledPlainAgentRefusalNamesNextStep(t *testing.T) {
+	s, _, _ := newStore(t)
+	ctx := context.Background()
+	_, w, _ := worker(t, s)
+	if _, err := s.Cancel(ctx, w.Name, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Retry(ctx, w.Name, "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "swarm_spawn") {
+		t.Fatalf("refusal = %v, want one naming swarm_spawn", err)
 	}
 }
