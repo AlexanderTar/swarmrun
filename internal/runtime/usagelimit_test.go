@@ -231,6 +231,59 @@ func TestReconcileLeavesACheckpointedSessionAloneWhenItQuotesTheUsageLimitText(t
 	}
 }
 
+// A pane still working (the limit line scrolled up, a spinner under it) is not
+// the current state either, even with the limit text last above a prompt.
+func TestReconcileLeavesACheckpointedBusySessionAloneWhenTheUsageLimitTextIsOnScreen(t *testing.T) {
+	s, tm := limitStore(t, false)
+	ctx := context.Background()
+	busy := "◆ " + fakeLimitLine + "\n✻ Working… (4s · esc to interrupt)\n─────\n❯ \n─────\n"
+	w, wSes := reconcileLimited(t, s, tm, busy)
+	if _, err := s.WriteCheckpoint(ctx, wSes.ID, CheckpointInput{Kind: Accepted, Summary: "starting"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ses, _ := s.LatestSession(ctx, w.ID); ses.State != Running || s.kindExhausted(ctx, Fake) {
+		t.Fatalf("session state = %s, exhausted = %v, want it left running", ses.State, s.kindExhausted(ctx, Fake))
+	}
+}
+
+// A hook that says a turn is open (a recent hook, so not stale) wins over an
+// idle-looking pane: the agent is not blocked on the limit while it works.
+func TestReconcileLeavesACheckpointedSessionAloneWhileAHookTurnIsOpen(t *testing.T) {
+	s, tm := limitStore(t, false)
+	ctx := context.Background()
+	w, wSes := reconcileLimited(t, s, tm, limitCurrentPane)
+	if _, err := s.WriteCheckpoint(ctx, wSes.ID, CheckpointInput{Kind: Accepted, Summary: "starting"}); err != nil {
+		t.Fatal(err)
+	}
+	s.setTurn(wSes.ID, true, "", s.Now())
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ses, _ := s.LatestSession(ctx, w.ID); ses.State != Running || s.kindExhausted(ctx, Fake) {
+		t.Fatalf("session state = %s, exhausted = %v, want it left running", ses.State, s.kindExhausted(ctx, Fake))
+	}
+}
+
+// The same pane as a healthy-looking idle one ends a checkpointed session:
+// the reconcile tick alone, no workflow, fails it and marks the kind exhausted.
+func TestReconcileEndsACheckpointedSessionWhoseIdlePaneEndsOnTheUsageLimit(t *testing.T) {
+	s, tm := limitStore(t, false)
+	ctx := context.Background()
+	w, wSes := reconcileLimited(t, s, tm, "◆ Working on unit 3.\n\n"+limitCurrentPane)
+	if _, err := s.WriteCheckpoint(ctx, wSes.ID, CheckpointInput{Kind: Accepted, Summary: "starting"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ses, _ := s.LatestSession(ctx, w.ID); ses.State != Failed || !s.kindExhausted(ctx, Fake) {
+		t.Fatalf("session state = %s, exhausted = %v, want failed and exhausted", ses.State, s.kindExhausted(ctx, Fake))
+	}
+}
+
 // The workflow path end to end: a coder whose pane shows the limit line is
 // ended, the run is auto-retried, and Retry re-resolves the kind through the
 // usage fallback because the limited kind is still exhausted.
