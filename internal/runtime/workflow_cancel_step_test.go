@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/AlexanderTar/swarmrun/internal/items"
+	"github.com/AlexanderTar/swarmrun/internal/workflow"
 )
 
 // startCancelFixture starts a build->review workflow and returns the store,
@@ -131,5 +132,142 @@ func TestItemCancelDoesNotEscalate(t *testing.T) {
 	}
 	if n := countEvent(relayEvents(t, s, orch.ID), "workflow_escalated"); n != 0 {
 		t.Fatalf("workflow_escalated relays = %d, want 0", n)
+	}
+}
+
+// BUG-173: after a cancelled round-2 builder escalates the workflow,
+// swarm_workflow resume retry must restart the build step and leave the
+// earlier rounds' run rows untouched.
+func TestResumeRetryRestartsCancelledStepKeepingRounds(t *testing.T) {
+	s, tm, _ := newStore(t)
+	ctx := context.Background()
+	orch, taskKey := seedWorkflowTask(t, s, gatedBuildReviewSpec(t, 3))
+	wtID, _, _, head := seedOwnedRepoWorktree(t, s, orch)
+	st, err := s.StartWorkflow(ctx, orch, StartWorkflowInput{ItemKey: taskKey,
+		Worktrees: []WorkflowWorktree{{WorktreeID: wtID, Mode: "rw"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Round 1: build completes, review asks for changes -> round 2 build.
+	coderSes := agentSessionForStep(t, s, st.ID, "build")
+	if _, err := s.WriteCheckpoint(ctx, coderSes.ID, CheckpointInput{Kind: CompletedCkp, Summary: "done",
+		Git: []GitRef{{Repo: "proj", Branch: "main", SHA: head, Dirty: false}}}); err != nil {
+		t.Fatal(err)
+	}
+	reviewerSes := agentSessionForStep(t, s, st.ID, "review")
+	if _, err := s.WriteCheckpoint(ctx, reviewerSes.ID, CheckpointInput{Kind: CompletedCkp, Summary: "needs work",
+		Verdict:  "changes_requested",
+		Findings: []workflow.Finding{{Severity: "major", File: "a.go", Line: 3, Summary: "off by one"}}}); err != nil {
+		t.Fatal(err)
+	}
+	coder, err := s.agentByID(ctx, agentIDForStep(t, s, st.ID, "build"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm.env[coder.Name] = map[string]string{"SWARM_SESSION": mustSessionID(t, s, coder.ID)}
+
+	if _, err := s.Cancel(ctx, coder.Name, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := workflowStateOf(t, s, st.ID); got != "escalated" {
+		t.Fatalf("setup: workflow state = %s, want escalated", got)
+	}
+	runRows := func() []string {
+		rows, err := s.DB.QueryContext(ctx, `SELECT step_id || '/' || round || '/' || role || '/' || state || '/' || COALESCE(agent_id, '')
+			FROM workflow_runs WHERE workflow_id = ? ORDER BY round, step_id`, st.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var r string
+			if err := rows.Scan(&r); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, r)
+		}
+		return out
+	}
+	before := runRows()
+
+	final, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "restart the build"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.State != "running" {
+		t.Fatalf("workflow state after resume = %s, want running", final.State)
+	}
+	after := runRows()
+	if len(after) != len(before)+1 {
+		t.Fatalf("run rows before %v, after %v; want exactly one new row", before, after)
+	}
+	for i, r := range before {
+		if after[i] != r {
+			t.Fatalf("earlier row changed: %q -> %q", r, after[i])
+		}
+	}
+	var newState, newAgent string
+	if err := s.DB.QueryRowContext(ctx, `SELECT state, COALESCE(agent_id, '') FROM workflow_runs
+		WHERE workflow_id = ? AND step_id = 'build' AND round = ?`, st.ID, final.Round).Scan(&newState, &newAgent); err != nil {
+		t.Fatal(err)
+	}
+	if newState != "active" || newAgent == "" {
+		t.Fatalf("build run at round %d = state %s agent %q, want active with an agent", final.Round, newState, newAgent)
+	}
+	if ses, err := s.LatestSession(ctx, newAgent); err != nil || !ses.State.Live() {
+		t.Fatalf("restarted build session = %+v err=%v, want live", ses, err)
+	}
+}
+
+// A cancelled reviewer escalates at once too, and resume retry restarts the
+// review at the same sha in a fresh round without touching round 1's rows.
+func TestResumeRetryRestartsCancelledReviewer(t *testing.T) {
+	s, tm, _ := newStore(t)
+	ctx := context.Background()
+	orch, taskKey := seedWorkflowTask(t, s, gatedBuildReviewSpec(t, 3))
+	wtID, _, _, head := seedOwnedRepoWorktree(t, s, orch)
+	st, err := s.StartWorkflow(ctx, orch, StartWorkflowInput{ItemKey: taskKey,
+		Worktrees: []WorkflowWorktree{{WorktreeID: wtID, Mode: "rw"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coderSes := agentSessionForStep(t, s, st.ID, "build")
+	if _, err := s.WriteCheckpoint(ctx, coderSes.ID, CheckpointInput{Kind: CompletedCkp, Summary: "done",
+		Git: []GitRef{{Repo: "proj", Branch: "main", SHA: head, Dirty: false}}}); err != nil {
+		t.Fatal(err)
+	}
+	reviewer, err := s.agentByID(ctx, agentIDForStep(t, s, st.ID, "review"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tm.env[reviewer.Name] = map[string]string{"SWARM_SESSION": mustSessionID(t, s, reviewer.ID)}
+	if _, err := s.Cancel(ctx, reviewer.Name, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := workflowStateOf(t, s, st.ID); got != "escalated" {
+		t.Fatalf("setup: workflow state = %s, want escalated", got)
+	}
+
+	final, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "restart the review"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.State != "running" {
+		t.Fatalf("workflow state after resume = %s, want running", final.State)
+	}
+	var oldState, newState, newAgent string
+	if err := s.DB.QueryRowContext(ctx, `SELECT state FROM workflow_runs WHERE workflow_id = ? AND step_id = 'review' AND round = 1`, st.ID).Scan(&oldState); err != nil {
+		t.Fatal(err)
+	}
+	if oldState != "cancelled" {
+		t.Fatalf("round 1 review row = %s, want cancelled (kept)", oldState)
+	}
+	if err := s.DB.QueryRowContext(ctx, `SELECT state, COALESCE(agent_id, '') FROM workflow_runs
+		WHERE workflow_id = ? AND step_id = 'review' AND round = ?`, st.ID, final.Round).Scan(&newState, &newAgent); err != nil {
+		t.Fatal(err)
+	}
+	if newState != "active" || newAgent == "" {
+		t.Fatalf("review run at round %d = state %s agent %q, want active with an agent", final.Round, newState, newAgent)
 	}
 }
