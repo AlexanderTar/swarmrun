@@ -46,9 +46,11 @@ func resolveWorkflowWorktrees(ctx context.Context, s *Server, in []workflowWorkt
 // workflowTool implements the swarm_workflow MCP tool (Spec B7).
 func workflowTool(s *Server) ToolDef {
 	return ToolDef{
-		Name:        "swarm_workflow",
-		Description: "Start, inspect, resume or cancel a workflow on a task in your subtree.",
-		Roles:       orchestratorRole,
+		Name: "swarm_workflow",
+		Description: "Start, inspect, resume or cancel a workflow on a task in your subtree. " +
+			"A workflow escalates when a step agent is cancelled with swarm_control cancel (immediately) or crashes past its retries; " +
+			"resume with decision retry then restarts that step on a fresh agent in a new round and keeps earlier rounds' runs.",
+		Roles: orchestratorRole,
 		Schema: json.RawMessage(`{
 			"type": "object",
 			"required": ["op", "item"],

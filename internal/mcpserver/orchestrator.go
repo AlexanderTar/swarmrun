@@ -891,9 +891,12 @@ func spawnTool(s *Server) ToolDef {
 // instead returns the replacement operation (operation_id/mode/phase).
 func controlTool(s *Server) ToolDef {
 	return ToolDef{
-		Name:        "swarm_control",
-		Description: "Pause, resume, cancel, retry or hand off an agent in your own subtree.",
-		Roles:       orchestratorRole,
+		Name: "swarm_control",
+		Description: "Pause, resume, cancel, retry or hand off an agent in your own subtree. " +
+			"retry restarts a completed, failed, crashed or interrupted agent; a live agent must be cancelled first. " +
+			"Cancelling a workflow step's agent escalates its workflow at once; retry on that cancelled (or failed) step agent then restarts the step through the workflow, " +
+			"the same as swarm_workflow resume with decision retry (note goes to the restarted step), on a fresh agent in a new round with earlier rounds kept.",
+		Roles: orchestratorRole,
 		Schema: objSchemaRequired(`"target":{"type":"string"},
 			"action":{"type":"string","enum":["pause","resume","cancel","retry","handoff"]},
 			"scope":{"type":"string"},"note":{"type":"string"},"request_id":{"type":"string"}`,
