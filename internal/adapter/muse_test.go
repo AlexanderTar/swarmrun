@@ -1443,6 +1443,10 @@ func TestMuseUsageLimitCurrent(t *testing.T) {
 	}{
 		{"pane-usage-limit-after-work.txt", true},
 		{"pane-usage-limit.txt", true},
+		// A narrower pane hard-wraps the ~175-char line onto continuation
+		// lines; the reset time can land on the second one.
+		{"pane-usage-limit-wrapped.txt", true},
+		{"pane-usage-limit-wrapped-narrow.txt", true},
 		{"pane-usage-limit-quoted.txt", false},
 		{"pane-usage-limit-busy.txt", false},
 		{"pane-idle.txt", false},

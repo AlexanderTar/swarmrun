@@ -513,10 +513,11 @@ func (m *Muse) UsageLimit(capture string, now time.Time) (string, time.Time, boo
 // bullet. Indented or ⎿-prefixed copies are quoted output, not the hard stop.
 var museLimitLine = regexp.MustCompile(`^◆ Usage limit reached\b`)
 
-// UsageLimitCurrent implements UsageLimitCurrenter: the limit line is the
-// current state when the composer is idle and the limit line is the last
-// output above it (blank lines and the composer's rule aside). The same words
-// quoted mid-scrollback, with anything printed after them, are not.
+// UsageLimitCurrent implements UsageLimitCurrenter: the limit message is the
+// current state when the composer is idle and it is the last output paragraph
+// above it (blank lines and the composer's rule aside). A narrow pane hard-wraps
+// the ~175-char line onto continuation lines, so the paragraph is read whole.
+// The same words quoted mid-scrollback, with anything printed after them, are not.
 func (m *Muse) UsageLimitCurrent(capture string, now time.Time) (string, time.Time, bool) {
 	if !m.Idle(capture) {
 		return "", time.Time{}, false
@@ -529,17 +530,25 @@ func (m *Muse) UsageLimitCurrent(capture string, now time.Time) (string, time.Ti
 			break
 		}
 	}
-	for i := prompt - 1; i >= 0; i-- {
-		l := strings.TrimSpace(lines[i])
-		if l == "" || strings.HasPrefix(l, "──") {
-			continue
-		}
-		if !museLimitLine.MatchString(strings.TrimRight(lines[i], " \t\r")) {
-			return "", time.Time{}, false
-		}
-		return m.UsageLimit(lines[i], now)
+	end := prompt - 1
+	for end >= 0 && (strings.TrimSpace(lines[end]) == "" || strings.HasPrefix(strings.TrimSpace(lines[end]), "──")) {
+		end--
 	}
-	return "", time.Time{}, false
+	if end < 0 {
+		return "", time.Time{}, false
+	}
+	start := end
+	for start > 0 && strings.TrimSpace(lines[start-1]) != "" && !strings.HasPrefix(strings.TrimSpace(lines[start-1]), "──") {
+		start--
+	}
+	if !museLimitLine.MatchString(strings.TrimRight(lines[start], " \t\r")) {
+		return "", time.Time{}, false
+	}
+	para := make([]string, 0, end-start+1)
+	for _, l := range lines[start : end+1] {
+		para = append(para, strings.TrimSpace(l))
+	}
+	return m.UsageLimit(strings.Join(para, " "), now)
 }
 
 func (m *Muse) ProcessNames() []*regexp.Regexp { return museProcess }
