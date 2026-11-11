@@ -1890,21 +1890,32 @@ func (s *Store) failSessionWith(ctx context.Context, a Agent, ses Session, paneT
 	// A workflow run whose launch failed otherwise waits for the next workflow
 	// tick before it auto-retries or escalates (TASK-1438, BUG-127: a failed
 	// launch sat "active" for ~15 s). Advance now, like the crashed path does.
+	s.advanceAgentWorkflow(ctx, a.ID, "failSession")
+	return nil
+}
+
+// advanceAgentWorkflow advances the workflow that owns agentID's latest run
+// row, if any, so a session that just ended (failed launch, cancel) is
+// auto-retried or escalated now instead of at the next 30 s stall scan.
+// A caller already inside advance (startSession's synchronous error path) or
+// CancelWorkflow tearing the workflow down holds its lock, so the TryLock
+// guard skips instead of deadlocking; a workflow that is no longer 'running'
+// makes advance a no-op, so a cancelled workflow never escalates here.
+func (s *Store) advanceAgentWorkflow(ctx context.Context, agentID, caller string) {
 	var workflowID string
 	err := s.DB.QueryRowContext(ctx, `SELECT workflow_id FROM workflow_runs WHERE agent_id = ?
-		ORDER BY round DESC, created_at DESC LIMIT 1`, a.ID).Scan(&workflowID)
-	// A failure reported from inside advance itself (startSession's synchronous
-	// error path) already holds the workflow lock and its caller handles the
-	// error, so skip when the lock is taken instead of deadlocking on it.
-	if err == nil {
-		if lock := lockForWorkflow(workflowID); lock.TryLock() {
-			lock.Unlock()
-			if aerr := s.advance(context.WithoutCancel(ctx), workflowID); aerr != nil {
-				s.logf("failSession: advance %s: %v", workflowID, aerr)
-			}
-		}
+		ORDER BY round DESC, created_at DESC LIMIT 1`, agentID).Scan(&workflowID)
+	if err != nil {
+		return
 	}
-	return nil
+	lock := lockForWorkflow(workflowID)
+	if !lock.TryLock() {
+		return
+	}
+	lock.Unlock()
+	if aerr := s.advance(context.WithoutCancel(ctx), workflowID); aerr != nil {
+		s.logf("%s: advance %s: %v", caller, workflowID, aerr)
+	}
 }
 
 // stripANSI strips terminal escape sequences before a StartupDialogs regex
@@ -2221,6 +2232,9 @@ func (s *Store) Cancel(ctx context.Context, name, sessionID, requestID string) (
 	}); err != nil {
 		return Agent{}, err
 	}
+	// A step agent's cancel ends its run: escalate the workflow now (BUG-173,
+	// BUG-174) rather than leaving it 'running' for the stall scan.
+	s.advanceAgentWorkflow(ctx, a.ID, "cancel")
 	return out, nil
 }
 
@@ -2449,6 +2463,21 @@ func (s *Store) Retry(ctx context.Context, name, note, sessionID, requestID stri
 		}
 		return a, nil
 	}
+	// A workflow step agent whose own run escalated the workflow restarts
+	// through the engine, not by a bare Retry (see retryThroughWorkflow).
+	if !ses.State.Live() && ses.State != Paused && ses.State != Stopping {
+		if restarted, routed, err := s.retryThroughWorkflow(ctx, a, note); err != nil {
+			return Agent{}, err
+		} else if routed {
+			if _, err := IdemTx(ctx, s, sessionID, requestID, "swarm_control", &out, func(*sql.Tx) error {
+				out = restarted
+				return nil
+			}); err != nil {
+				return Agent{}, err
+			}
+			return restarted, nil
+		}
+	}
 	// Batch 3: Retry consults the replacement coordinator before the state
 	// guard, so a refused retry names the operation it would race.
 	if err := s.refuseIfOperationInFlight(ctx, a.ID); err != nil {
@@ -2461,7 +2490,7 @@ func (s *Store) Retry(ctx context.Context, name, note, sessionID, requestID stri
 		return s.queueRetryIntent(ctx, a, ses, note, sessionID, requestID)
 	}
 	if !slices.Contains(retryableStates, ses.State) {
-		return Agent{}, &items.Error{Code: items.CodeConflict, Message: notRetryable}
+		return Agent{}, s.retryRefusal(ctx, a, ses)
 	}
 
 	// The one agent limit: a failed/crashed/completed/interrupted predecessor
