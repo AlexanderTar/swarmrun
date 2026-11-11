@@ -199,6 +199,16 @@ type UsageLimiter interface {
 	UsageLimit(capture string, now time.Time) (line string, resetsAt time.Time, ok bool)
 }
 
+// UsageLimitCurrenter is an optional UsageLimiter capability: the limit line
+// is the pane's current state, not words somewhere in its scrollback. The pane
+// is idle and the line is the last output above the prompt, with nothing
+// printed after it. The runtime ends a session that already has checkpoints
+// only on this stricter test (BUG-173), since such an agent may merely quote
+// the line in tool output, a diff or a code block.
+type UsageLimitCurrenter interface {
+	UsageLimitCurrent(capture string, now time.Time) (line string, resetsAt time.Time, ok bool)
+}
+
 // StartupStaller is an optional Adapter capability: a kind whose launch can sit
 // on an unchanged pane longer than the runtime's default startup stall limit
 // (30 s) says how long a quiet pane is still a normal start. Grok needs it: its

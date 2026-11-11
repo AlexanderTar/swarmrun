@@ -133,6 +133,33 @@ func (f *Fake) UsageLimit(capture string, _ time.Time) (string, time.Time, bool)
 	return f.UsageLimitText, f.UsageLimitReset, true
 }
 
+// UsageLimitCurrent is UsageLimitText as the last output above an idle prompt
+// (UsageLimitCurrenter): same rule as Muse, on the fake's plain ❯ composer.
+func (f *Fake) UsageLimitCurrent(capture string, _ time.Time) (string, time.Time, bool) {
+	if f.UsageLimitText == "" || !f.Idle(capture) {
+		return "", time.Time{}, false
+	}
+	lines := strings.Split(capture, "\n")
+	prompt := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], "❯") {
+			prompt = i
+			break
+		}
+	}
+	for i := prompt - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" || strings.HasPrefix(l, "──") {
+			continue
+		}
+		if !strings.Contains(l, f.UsageLimitText) {
+			break
+		}
+		return f.UsageLimitText, f.UsageLimitReset, true
+	}
+	return "", time.Time{}, false
+}
+
 func (f *Fake) LastReply(string, time.Time) (string, bool, bool) {
 	return f.LastReplyText, f.LastReplyFound, f.LastReplyReadable
 }

@@ -1428,3 +1428,36 @@ func TestMuseUsageLimit(t *testing.T) {
 		t.Errorf("unparseable reset = %v, %v", r, ok)
 	}
 }
+
+// BUG-173: a muse that hit its cap hours into a run draws the limit line under
+// its earlier work. Only when the line is the last output above an idle composer
+// is it the current state; the same words quoted mid-scrollback, or on a pane
+// that is still working, are not.
+func TestMuseUsageLimitCurrent(t *testing.T) {
+	a := newMuse(testDeps(t))
+	zone := time.FixedZone("test", 3600)
+	now := time.Date(2026, 11, 11, 9, 0, 0, 0, zone)
+	for _, tc := range []struct {
+		fixture string
+		want    bool
+	}{
+		{"pane-usage-limit-after-work.txt", true},
+		{"pane-usage-limit.txt", true},
+		{"pane-usage-limit-quoted.txt", false},
+		{"pane-usage-limit-busy.txt", false},
+		{"pane-idle.txt", false},
+	} {
+		line, resetsAt, ok := a.UsageLimitCurrent(pane(t, "muse", tc.fixture), now)
+		if ok != tc.want {
+			t.Errorf("%s: current = %v, want %v", tc.fixture, ok, tc.want)
+		}
+		if ok && (!strings.HasPrefix(line, "◆ Usage limit reached") || resetsAt.IsZero()) {
+			t.Errorf("%s: line = %q, resetsAt = %v", tc.fixture, line, resetsAt)
+		}
+	}
+	// The quoted fixture still has the words in its scrollback: the plain
+	// UsageLimit sees them, which is why reconcile needs the stricter check.
+	if _, _, ok := a.UsageLimit(pane(t, "muse", "pane-usage-limit-quoted.txt"), now); !ok {
+		t.Error("fixture should carry the quoted limit text")
+	}
+}

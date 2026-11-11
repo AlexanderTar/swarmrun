@@ -509,6 +509,39 @@ func (m *Muse) UsageLimit(capture string, now time.Time) (string, time.Time, boo
 	return line, resetsAt, true
 }
 
+// museLimitLine is the limit line as Muse draws it: flush left behind its ◆
+// bullet. Indented or ⎿-prefixed copies are quoted output, not the hard stop.
+var museLimitLine = regexp.MustCompile(`^◆ Usage limit reached\b`)
+
+// UsageLimitCurrent implements UsageLimitCurrenter: the limit line is the
+// current state when the composer is idle and the limit line is the last
+// output above it (blank lines and the composer's rule aside). The same words
+// quoted mid-scrollback, with anything printed after them, are not.
+func (m *Muse) UsageLimitCurrent(capture string, now time.Time) (string, time.Time, bool) {
+	if !m.Idle(capture) {
+		return "", time.Time{}, false
+	}
+	lines := strings.Split(StripANSI(capture), "\n")
+	prompt := -1
+	for i := len(lines) - 1; i >= 0; i-- {
+		if museIdle.MatchString(lines[i]) {
+			prompt = i
+			break
+		}
+	}
+	for i := prompt - 1; i >= 0; i-- {
+		l := strings.TrimSpace(lines[i])
+		if l == "" || strings.HasPrefix(l, "──") {
+			continue
+		}
+		if !museLimitLine.MatchString(strings.TrimRight(lines[i], " \t\r")) {
+			return "", time.Time{}, false
+		}
+		return m.UsageLimit(lines[i], now)
+	}
+	return "", time.Time{}, false
+}
+
 func (m *Muse) ProcessNames() []*regexp.Regexp { return museProcess }
 func (m *Muse) IdlePrompt() *regexp.Regexp     { return museIdle }
 func (m *Muse) Busy() *regexp.Regexp           { return museBusy }
