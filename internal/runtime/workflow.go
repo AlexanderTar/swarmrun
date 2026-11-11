@@ -1895,32 +1895,34 @@ func (s *Store) rwBaseForReview(ctx context.Context, wf wfRow, reviewWTID string
 	return "", false
 }
 
-// notWaitingOnYou is spec B7's resume-refusal copy.
-// stepRunOf reports the workflow and run state of agentID's latest workflow
-// run, or ok=false when the agent is not a workflow step agent.
-func (s *Store) stepRunOf(ctx context.Context, agentID string) (wf wfRow, runState string, ok bool, err error) {
+// stepRunOf reports the workflow, and the state and round of agentID's latest
+// workflow run, or ok=false when the agent is not a workflow step agent.
+func (s *Store) stepRunOf(ctx context.Context, agentID string) (wf wfRow, runState string, runRound int, ok bool, err error) {
 	var workflowID string
-	err = s.DB.QueryRowContext(ctx, `SELECT r.workflow_id, r.state FROM workflow_runs r
+	err = s.DB.QueryRowContext(ctx, `SELECT r.workflow_id, r.state, r.round FROM workflow_runs r
 		JOIN workflows w ON w.id = r.workflow_id WHERE r.agent_id = ?
-		ORDER BY w.created_at DESC, r.round DESC, r.created_at DESC LIMIT 1`, agentID).Scan(&workflowID, &runState)
+		ORDER BY w.created_at DESC, r.round DESC, r.created_at DESC LIMIT 1`, agentID).Scan(&workflowID, &runState, &runRound)
 	if errors.Is(err, sql.ErrNoRows) {
-		return wfRow{}, "", false, nil
+		return wfRow{}, "", 0, false, nil
 	}
 	if err != nil {
-		return wfRow{}, "", false, err
+		return wfRow{}, "", 0, false, err
 	}
 	wf, ok, err = s.workflowRowByID(ctx, workflowID)
-	return wf, runState, ok, err
+	return wf, runState, runRound, ok, err
 }
 
 // stepRetryTarget reports the workflow whose escalation agent a's own
 // cancelled or failed run caused, i.e. the case retryThroughWorkflow restarts.
 func (s *Store) stepRetryTarget(ctx context.Context, a Agent) (wfRow, bool, error) {
-	wf, runState, isStep, err := s.stepRunOf(ctx, a.ID)
+	wf, runState, runRound, isStep, err := s.stepRunOf(ctx, a.ID)
 	if err != nil || !isStep {
 		return wfRow{}, false, err
 	}
-	if wf.State != "escalated" || (runState != string(workflow.RunStateCancelled) && runState != string(workflow.RunStateFailed)) {
+	// The run must be in the workflow's current round: an agent from an earlier
+	// round was already restarted, and retrying it would grant a further round.
+	if wf.State != "escalated" || runRound != wf.Round ||
+		(runState != string(workflow.RunStateCancelled) && runState != string(workflow.RunStateFailed)) {
 		return wfRow{}, false, nil
 	}
 	return wf, true, nil
@@ -1964,7 +1966,7 @@ func (s *Store) retryThroughWorkflow(ctx context.Context, a Agent, note string) 
 		return a, true, nil
 	}
 	if err := s.DB.QueryRowContext(ctx, `SELECT COALESCE(agent_id, '') FROM workflow_runs
-		WHERE workflow_id = ? AND step_id = ? AND role = ? ORDER BY round DESC LIMIT 1`, wf.ID, stepID, role).Scan(&newID); err != nil || newID == "" {
+		WHERE workflow_id = ? AND step_id = ? AND role = ? ORDER BY round DESC, created_at DESC LIMIT 1`, wf.ID, stepID, role).Scan(&newID); err != nil || newID == "" {
 		return a, true, nil
 	}
 	if restarted, err := s.agentByID(ctx, newID); err == nil {
@@ -1976,7 +1978,7 @@ func (s *Store) retryThroughWorkflow(ctx context.Context, a Agent, note string) 
 // retryRefusal is the 409 swarm_control retry gives an agent that can't be
 // retried, naming the next step to take instead of a bare state complaint.
 func (s *Store) retryRefusal(ctx context.Context, a Agent, ses Session) error {
-	wf, _, isStep, _ := s.stepRunOf(ctx, a.ID)
+	wf, _, _, isStep, _ := s.stepRunOf(ctx, a.ID)
 	var msg string
 	switch {
 	case ses.State == Paused:
@@ -1986,6 +1988,12 @@ func (s *Store) retryRefusal(ctx context.Context, a Agent, ses Session) error {
 			"then retry it (swarm_control retry) or use swarm_workflow resume with decision retry to restart the step.", a.Name)
 	case ses.State.Live():
 		msg = fmt.Sprintf("%s is still running. Cancel it first (swarm_control cancel); retry only restarts an agent that has ended.", a.Name)
+	case isStep && wf.State == "escalated":
+		msg = fmt.Sprintf("%s is from an earlier round of its workflow; a newer agent already runs or ran that step. "+
+			"Check swarm_workflow status, then use swarm_workflow resume with decision retry to restart the step.", a.Name)
+	case isStep && (wf.State == "cancelled" || wf.State == "failed" || wf.State == "succeeded"):
+		msg = fmt.Sprintf("%s's workflow is %s, so there is nothing to restart. Begin again with swarm_workflow start, "+
+			"or spawn a replacement with swarm_spawn.", a.Name, wf.State)
 	case isStep:
 		msg = fmt.Sprintf("%s's workflow isn't waiting on it (workflow state: %s). Check swarm_workflow status; "+
 			"once it is escalated, swarm_control retry or swarm_workflow resume with decision retry restarts the step.", a.Name, wf.State)
@@ -1997,6 +2005,7 @@ func (s *Store) retryRefusal(ctx context.Context, a Agent, ses Session) error {
 	return &items.Error{Code: items.CodeConflict, Message: msg}
 }
 
+// notWaitingOnYou is spec B7's resume-refusal copy.
 func notWaitingOnYou(key, state string) error {
 	return &items.Error{Code: items.CodeConflict, Message: fmt.Sprintf("%s's workflow isn't waiting on you (state: %s).", key, state)}
 }

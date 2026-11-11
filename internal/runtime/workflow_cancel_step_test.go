@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -347,5 +348,88 @@ func TestRetryCancelledPlainAgentRefusalNamesNextStep(t *testing.T) {
 	_, err := s.Retry(ctx, w.Name, "", "", "")
 	if err == nil || !strings.Contains(err.Error(), "swarm_spawn") {
 		t.Fatalf("refusal = %v, want one naming swarm_spawn", err)
+	}
+}
+
+// BUG-173 review: retrying a stale step agent (its cancelled run is from an
+// earlier round, a newer agent already restarted the step) must not grant yet
+// another round. The refusal points at the resume that restarts the current
+// step.
+func TestRetryStaleRoundStepAgentRefusedWithoutNewRound(t *testing.T) {
+	s, tm, _ := newStore(t)
+	ctx := context.Background()
+	orch, taskKey := seedWorkflowTask(t, s, buildReviewSpec(t))
+	wtID, _, _, _ := seedOwnedRepoWorktree(t, s, orch)
+	st, err := s.StartWorkflow(ctx, orch, StartWorkflowInput{ItemKey: taskKey,
+		Worktrees: []WorkflowWorktree{{WorktreeID: wtID, Mode: "rw"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelBuild := func() Agent {
+		a, err := s.agentByID(ctx, agentIDForStep(t, s, st.ID, "build"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		tm.env[a.Name] = map[string]string{"SWARM_SESSION": mustSessionID(t, s, a.ID)}
+		if _, err := s.Cancel(ctx, a.Name, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	stale := cancelBuild()
+	// Round 2: the step restarts on a fresh agent, which is cancelled too.
+	if _, err := s.Retry(ctx, stale.Name, "", "", ""); err != nil {
+		t.Fatalf("first retry: %v", err)
+	}
+	current := cancelBuild()
+	if current.ID == stale.ID {
+		t.Fatal("setup: round 2 reused the round 1 agent")
+	}
+	if got := workflowStateOf(t, s, st.ID); got != "escalated" {
+		t.Fatalf("setup: workflow state = %s, want escalated", got)
+	}
+	snapshot := func() string {
+		var round, extra int
+		var state string
+		if err := s.DB.QueryRowContext(ctx, `SELECT round, extra_rounds, state FROM workflows WHERE id = ?`, st.ID).Scan(&round, &extra, &state); err != nil {
+			t.Fatal(err)
+		}
+		var runs int
+		if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM workflow_runs WHERE workflow_id = ?`, st.ID).Scan(&runs); err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprintf("round=%d extra_rounds=%d state=%s runs=%d", round, extra, state, runs)
+	}
+	before := snapshot()
+
+	_, err = s.Retry(ctx, stale.Name, "", "", "")
+	if err == nil {
+		t.Fatal("Retry on a stale-round step agent succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "swarm_workflow resume") {
+		t.Fatalf("refusal %q does not name swarm_workflow resume", err)
+	}
+	if after := snapshot(); after != before {
+		t.Fatalf("a refused stale retry changed the workflow: %s -> %s", before, after)
+	}
+}
+
+// A terminal workflow has no escalation to wait for: the refusal names how to
+// begin again, not "once it is escalated".
+func TestRetryTerminalWorkflowRefusalNamesStart(t *testing.T) {
+	s, orch, taskKey, _, coder := startCancelFixture(t)
+	ctx := context.Background()
+	if _, err := s.CancelWorkflow(ctx, orch, taskKey, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Retry(ctx, coder.Name, "", "", "")
+	if err == nil {
+		t.Fatal("Retry on a step agent of a cancelled workflow succeeded, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "swarm_workflow start") {
+		t.Fatalf("refusal %q does not name swarm_workflow start", err)
+	}
+	if strings.Contains(err.Error(), "once it is escalated") {
+		t.Fatalf("refusal %q still talks about escalation", err)
 	}
 }
