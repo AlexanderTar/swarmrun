@@ -65,9 +65,8 @@ func (s *Store) UsageLimitResets() []UsageLimitReset {
 // and the session fails with a reason naming the limit and what happens next.
 // Failed, not cancelled, is what sends a workflow run to auto-retry, and Retry
 // re-resolves the kind through the same fallback a spawn uses. It reports
-// whether it ended the session. The caller has already established the
-// session has no checkpoint yet; a session that has one may merely print the
-// words.
+// whether it ended the session. The caller has already established the limit
+// is real: no checkpoint yet, or the line is the pane's current state.
 func (s *Store) endIfUsageLimited(ctx context.Context, a Agent, ses Session, ad adapter.Adapter, capture string) (bool, error) {
 	ul, ok := ad.(adapter.UsageLimiter)
 	if !ok {
@@ -104,9 +103,14 @@ func (s *Store) endIfUsageLimited(ctx context.Context, a Agent, ses Session, ad 
 	return true, nil
 }
 
-// endIfUsageLimitedLive is reconcile's entry: only for a session with no
-// checkpoint yet this attempt, so the lookups run only once the pane matches.
-func (s *Store) endIfUsageLimitedLive(ctx context.Context, r liveRow, ad adapter.Adapter, capture string) (bool, error) {
+// endIfUsageLimitedLive is reconcile's entry. A session with no checkpoint yet
+// this attempt ends on the kind's limit line anywhere in the capture. A session
+// that has checkpointed may merely print those words, so it ends only when the
+// turn is over (turnOver) and the adapter says the line is the pane's current
+// state (adapter.UsageLimitCurrenter: last output above the idle prompt).
+// BUG-173: a coder hours into its run hit the cap and sat "running" forever.
+// The lookups run only once the pane matches.
+func (s *Store) endIfUsageLimitedLive(ctx context.Context, r liveRow, ad adapter.Adapter, capture string, turnOver bool) (bool, error) {
 	ul, ok := ad.(adapter.UsageLimiter)
 	if !ok {
 		return false, nil
@@ -114,8 +118,16 @@ func (s *Store) endIfUsageLimitedLive(ctx context.Context, r liveRow, ad adapter
 	if _, _, ok := ul.UsageLimit(capture, s.Now()); !ok {
 		return false, nil
 	}
-	if acked, err := s.hasAnyCheckpoint(ctx, r.AgentID, r.Attempt); err != nil || acked {
+	if acked, err := s.hasAnyCheckpoint(ctx, r.AgentID, r.Attempt); err != nil {
 		return false, err
+	} else if acked {
+		cur, ok := ad.(adapter.UsageLimitCurrenter)
+		if !ok || !turnOver {
+			return false, nil
+		}
+		if _, _, ok := cur.UsageLimitCurrent(capture, s.Now()); !ok {
+			return false, nil
+		}
 	}
 	a, err := s.agentByID(ctx, r.AgentID)
 	if err != nil {

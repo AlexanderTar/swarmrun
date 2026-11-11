@@ -176,8 +176,13 @@ func TestStartupUsageLimitWithoutFallbackRelaysTheLimit(t *testing.T) {
 	}
 }
 
-// reconcileLimited makes worker's pane show the limit line and runs one tick.
-func reconcileLimited(t *testing.T, s *Store, tm *fakeTmux) (Agent, Session) {
+// limitCurrentPane is the pane of a session blocked on its limit: the line is
+// the last output above an idle prompt.
+const limitCurrentPane = "◆ " + fakeLimitLine + "\n─────\n❯ \n─────\n"
+
+// reconcileLimited gives a running worker a pane showing capture (which
+// carries the limit text) for the next reconcile tick.
+func reconcileLimited(t *testing.T, s *Store, tm *fakeTmux, capture string) (Agent, Session) {
 	t.Helper()
 	s.Adapters[Fake].(*adapter.Fake).UsageLimitText = fakeLimitLine
 	_, w, wSes := worker(t, s)
@@ -186,7 +191,7 @@ func reconcileLimited(t *testing.T, s *Store, tm *fakeTmux) (Agent, Session) {
 	}
 	panes(tm, Pane{Session: w.Name, Command: "swarm-fake-agent"})
 	tm.env[w.Name] = map[string]string{"SWARM_SESSION": wSes.ID}
-	tm.captures[w.Name] = []string{"◆ " + fakeLimitLine + "\n─────\n❯ \n─────\n"}
+	tm.captures[w.Name] = []string{capture}
 	return w, wSes
 }
 
@@ -195,7 +200,7 @@ func reconcileLimited(t *testing.T, s *Store, tm *fakeTmux) (Agent, Session) {
 func TestReconcileEndsARunningSessionThatShowsTheUsageLimitBeforeItsFirstCheckpoint(t *testing.T) {
 	s, tm := limitStore(t, false)
 	ctx := context.Background()
-	w, _ := reconcileLimited(t, s, tm)
+	w, _ := reconcileLimited(t, s, tm, limitCurrentPane)
 	if err := s.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -208,11 +213,13 @@ func TestReconcileEndsARunningSessionThatShowsTheUsageLimitBeforeItsFirstCheckpo
 }
 
 // A session that has checkpointed may merely print the words (quoting a log, a
-// test fixture): it is left alone.
-func TestReconcileLeavesACheckpointedSessionAloneWhenItPrintsTheUsageLimitText(t *testing.T) {
+// test fixture): with output after them the limit is not the current state and
+// the session is left alone.
+func TestReconcileLeavesACheckpointedSessionAloneWhenItQuotesTheUsageLimitText(t *testing.T) {
 	s, tm := limitStore(t, false)
 	ctx := context.Background()
-	w, wSes := reconcileLimited(t, s, tm)
+	quoted := "◆ " + fakeLimitLine + "\n\n◆ That is the line the adapter matches.\n─────\n❯ \n─────\n"
+	w, wSes := reconcileLimited(t, s, tm, quoted)
 	if _, err := s.WriteCheckpoint(ctx, wSes.ID, CheckpointInput{Kind: Accepted, Summary: "starting"}); err != nil {
 		t.Fatal(err)
 	}
@@ -228,6 +235,17 @@ func TestReconcileLeavesACheckpointedSessionAloneWhenItPrintsTheUsageLimitText(t
 // ended, the run is auto-retried, and Retry re-resolves the kind through the
 // usage fallback because the limited kind is still exhausted.
 func TestWorkflowStepRespawnsOnTheFallbackAfterAUsageLimit(t *testing.T) {
+	workflowStepRespawnsAfterUsageLimit(t, false)
+}
+
+// BUG-173: the same, hours into the run. The coder has checkpointed many times
+// when its pane settles on the limit line above an idle prompt; it is ended and
+// retried on the fallback instead of sitting "running" until a human cancels it.
+func TestWorkflowStepRespawnsOnTheFallbackWhenTheLimitHitsAfterCheckpoints(t *testing.T) {
+	workflowStepRespawnsAfterUsageLimit(t, true)
+}
+
+func workflowStepRespawnsAfterUsageLimit(t *testing.T, checkpointed bool) {
 	s, tm := newStoreWithFallback(t)
 	setFallback(t, s, settings.RoleDefault{Agent: Codex, Model: "gpt-6-astra"})
 	ctx := context.Background()
@@ -245,6 +263,13 @@ func TestWorkflowStepRespawnsOnTheFallbackAfterAUsageLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	coderSes := agentSessionForStep(t, s, st.ID, "build")
+	if checkpointed {
+		for _, sum := range []string{"starting", "unit 1 red", "unit 1 green"} {
+			if _, err := s.WriteCheckpoint(ctx, coderSes.ID, CheckpointInput{Kind: Progress, Summary: sum}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	s.Adapters[Fake].(*adapter.Fake).UsageLimitText = fakeLimitLine
 	panes(tm, Pane{Session: coder.Name, Command: "swarm-fake-agent"})
 	tm.env[coder.Name] = map[string]string{"SWARM_SESSION": coderSes.ID}

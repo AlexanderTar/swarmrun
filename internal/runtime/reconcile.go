@@ -1246,10 +1246,11 @@ func (s *Store) resolveAlive(ctx context.Context, r liveRow, p Pane) error {
 		}); ok {
 			o.ObserveCapture(r.SessionID, capture)
 		}
-		// A kind's usage-limit line over a healthy-looking idle prompt, before the
-		// first checkpoint: the session can never start, so end it now.
+		// A kind's usage-limit line over a healthy-looking idle prompt: before the
+		// first checkpoint the session can never start; after one, only a limit
+		// line that is the pane's current state counts. End it now either way.
 		if !ownedByWatchStartup {
-			if limited, err := s.endIfUsageLimitedLive(ctx, r, ad, capture); limited || err != nil {
+			if limited, err := s.endIfUsageLimitedLive(ctx, r, ad, capture, turnOver); limited || err != nil {
 				return err
 			}
 		}
