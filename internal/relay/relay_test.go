@@ -251,7 +251,7 @@ func TestOfflinePage(t *testing.T) {
 	}
 }
 
-// The offline page carries the same app icon as the board's favicon, inline, so it needs no second request.
+// The offline page carries the board's favicon (the Liquid Glass app icon), inline, so it needs no second request.
 func TestOfflinePageHasTheAppIcon(t *testing.T) {
 	srv := newRelay(t, relay.Options{})
 	resp, err := http.Get(srv.URL + "/")
@@ -260,20 +260,20 @@ func TestOfflinePageHasTheAppIcon(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
-	m := regexp.MustCompile(`<link rel=icon href="data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)">`).FindSubmatch(b)
+	m := regexp.MustCompile(`<link rel=icon type=image/png href="data:image/png;base64,([A-Za-z0-9+/=]+)">`).FindSubmatch(b)
 	if m == nil {
-		t.Fatalf("offline page has no inline icon link: %s", b)
+		t.Fatalf("offline page has no inline PNG icon link: %s", b)
 	}
 	got, err := base64.StdEncoding.DecodeString(string(m[1]))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := os.ReadFile("../../apps/menubar/Resources/AppIcon.svg")
+	want, err := os.ReadFile("../../web/public/favicon.png")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != string(want) {
-		t.Fatal("inline icon differs from apps/menubar/Resources/AppIcon.svg")
+		t.Fatal("inline icon differs from web/public/favicon.png (rerun apps/menubar/scripts/build-icon.sh)")
 	}
 }
 

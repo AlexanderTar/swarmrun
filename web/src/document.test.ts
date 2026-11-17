@@ -17,11 +17,18 @@ describe("document theme", () => {
 describe("app icon", () => {
   const document = new DOMParser().parseFromString(readFileSync("index.html", "utf8"), "text/html");
 
-  it("serves the Swarm app icon as the favicon", () => {
-    expect(document.querySelector('link[rel="icon"]')?.getAttribute("href")).toBe("/favicon.svg");
-    expect(readFileSync("public/favicon.svg", "utf8")).toBe(
-      readFileSync("../apps/menubar/Resources/AppIcon.svg", "utf8"),
-    );
+  it("serves the Liquid Glass app icon as the favicon", () => {
+    const link = document.querySelector('link[rel="icon"]');
+    expect(link?.getAttribute("href")).toBe("/favicon.png");
+    expect(link?.getAttribute("type")).toBe("image/png");
+    expect(existsSync("public/favicon.svg")).toBe(false); // the old flat drawing is gone
+    const png = readFileSync("public/favicon.png");
+    expect(png.subarray(1, 4).toString()).toBe("PNG");
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([96, 96]); // IHDR width, height
+    expect(png[25]).toBe(6); // RGBA: the rounded corners stay transparent
+    // The site and the relay's offline page ship the same bytes (apps/menubar/scripts/build-icon.sh writes all three).
+    expect(readFileSync("../site/assets/favicon.png").equals(png)).toBe(true);
+    expect(readFileSync("../internal/relay/favicon.png").equals(png)).toBe(true);
   });
 
   it("links a 180px apple-touch-icon for phone home screens", () => {
@@ -36,5 +43,6 @@ describe("app icon", () => {
     expect(png.subarray(1, 4).toString()).toBe("PNG");
     expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([180, 180]); // IHDR width, height
     expect(png[25]).toBe(2); // IHDR colour type 2 = RGB: iOS fills alpha with black, so the square must be opaque
+    expect(readFileSync("../site/assets/apple-touch-icon.png").equals(png)).toBe(true);
   });
 });

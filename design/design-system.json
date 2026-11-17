@@ -17,10 +17,17 @@
       "name": "Logos",
       "tile": "l",
       "order": [
+        "app-icon.png",
         "app-icon.svg",
         "glyph.svg"
       ],
       "files": {
+        "app-icon.png": {
+          "name": "app-icon.png",
+          "blob": "8f6a1ecd17d3cb95f77be9a7997fdccf",
+          "size": 338858,
+          "type": "image/png"
+        },
         "app-icon.svg": {
           "name": "app-icon.svg",
           "blob": "436705b2e858928390a3aa2292ba0aad",
@@ -42,8 +49,8 @@
   },
   "lastChange": {
     "by": "Alexander Taraymovich",
-    "at": "2026-10-28T15:17:18Z",
+    "at": "2026-11-17T13:12:12Z",
     "via": "Claude Code",
-    "note": "Converted design/ to the Design System artifact file layout."
+    "note": "Added app-icon.png, the macOS Liquid Glass app icon Swarm ships everywhere."
   }
 }

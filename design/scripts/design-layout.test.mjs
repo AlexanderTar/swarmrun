@@ -18,7 +18,7 @@ test("design-system.json has the artifact index shape", () => {
   assert.ok(index.groups.includes("Logos"), "groups must list Logos");
   const logos = index.assetGroups?.Logos;
   assert.ok(logos, "missing assetGroups.Logos");
-  assert.deepEqual(logos.order, ["app-icon.svg", "glyph.svg"]);
+  assert.deepEqual(logos.order, ["app-icon.png", "app-icon.svg", "glyph.svg"]);
   for (const file of logos.order) {
     const entry = logos.files?.[file];
     assert.ok(entry, `missing assetGroups.Logos.files[${file}]`);
@@ -58,14 +58,20 @@ test("every preview renders against the repo tokens and fonts", () => {
   }
 });
 
-test("Logo preview inlines the icon (no path or /_blob reference)", () => {
+test("Logo preview inlines the Liquid Glass app icon PNG (no path or /_blob reference)", () => {
   const html = readFileSync(join(DESIGN_DIR, "components", "Logo", "preview.html"), "utf8");
-  assert.ok(!html.includes("src="), "Logo preview must not reference an external image");
+  const srcs = [...html.matchAll(/src="([^"]*)"/g)].map((m) => m[1]);
+  assert.equal(srcs.length, 1, "Logo preview must show exactly one image, the app icon");
+  assert.ok(srcs[0].startsWith("data:image/png;base64,"), "Logo preview must inline the app icon as a PNG data URI");
   assert.ok(!html.includes("/_blob"), "Logo preview must not reference an artifact blob");
-  assert.ok(html.includes("<svg"), "Logo preview must inline the app icon SVG");
+  const png = Buffer.from(srcs[0].slice("data:image/png;base64,".length), "base64");
+  assert.equal(png.subarray(1, 4).toString(), "PNG");
+  assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [192, 192], "a 2x render for the 96px tile");
+  assert.ok(!html.includes('viewBox="0 0 1024 1024"'), "the flat SVG drawing is gone from the Logo card");
 });
 
 test("logos live in assets/Logos with a README", () => {
+  assert.ok(statSync(join(DESIGN_DIR, "assets", "Logos", "app-icon.png")).isFile());
   assert.ok(statSync(join(DESIGN_DIR, "assets", "Logos", "app-icon.svg")).isFile());
   assert.ok(statSync(join(DESIGN_DIR, "assets", "Logos", "glyph.svg")).isFile());
   assert.ok(statSync(join(DESIGN_DIR, "assets", "Logos", "README.md")).isFile());
