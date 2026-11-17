@@ -85,5 +85,7 @@ ease-out. No animation on scroll; `prefers-reduced-motion` disables the rest.
 
 Each `components/<Name>/preview.html` starts with an `@dsCard` marker and
 renders the component against the generated tokens: Colors, Type, Logo,
-Buttons, StatusPills, Cover. The Logo preview inlines the app icon SVG so the
-same file works in the repo and on the artifact page with no path reference.
+Buttons, StatusPills, Cover. The Logo preview inlines a 192 px render of the
+Liquid Glass app icon as a PNG data URI (written by
+`apps/menubar/scripts/build-icon.sh`), so the same file works in the repo and
+on the artifact page with no path reference.
