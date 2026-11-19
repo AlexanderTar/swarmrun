@@ -1,0 +1,33 @@
+# Dependabot: one weekly pull request that updates every dependency in the repo together.
+# apps/menubar/Package.swift has no external packages, so Swift is not listed.
+version: 2
+
+multi-ecosystem-groups:
+  all-dependencies:
+    schedule:
+      interval: "weekly"
+
+updates:
+  # Go modules (go.mod at the root: daemon, CLI, relay)
+  - package-ecosystem: "gomod"
+    directory: "/"
+    patterns: ["*"]
+    multi-ecosystem-group: "all-dependencies"
+
+  # Board (web/package.json, pnpm lockfile)
+  - package-ecosystem: "npm"
+    directory: "/web"
+    patterns: ["*"]
+    multi-ecosystem-group: "all-dependencies"
+
+  # Workflow actions and the composite setup-web action
+  - package-ecosystem: "github-actions"
+    directories: ["/", "/.github/actions/setup-web"]
+    patterns: ["*"]
+    multi-ecosystem-group: "all-dependencies"
+
+  # Relay container base images
+  - package-ecosystem: "docker"
+    directory: "/relay"
+    patterns: ["*"]
+    multi-ecosystem-group: "all-dependencies"
