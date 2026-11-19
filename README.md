@@ -1,4 +1,15 @@
+<p align="center">
+  <img src="assets/social-preview.png" alt="Swarm: run your coding agents as a team" width="100%">
+</p>
+
 # Swarm
+
+[![CI](https://github.com/AlexanderTar/swarmrun/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/AlexanderTar/swarmrun/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/AlexanderTar/swarmrun)](https://github.com/AlexanderTar/swarmrun/releases/latest)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/AlexanderTar/swarmrun)](go.mod)
+[![Platform: macOS | Linux](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](#requirements)
+[![Website](https://img.shields.io/badge/website-swarmrun.dev-7c5cff)](https://swarmrun.dev)
 
 Plan and deliver software with a team of coding agents you supervise from your Mac or Linux desktop.
 
