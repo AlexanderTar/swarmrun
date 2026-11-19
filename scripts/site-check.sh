@@ -23,7 +23,7 @@ sh "$ROOT/site/build.sh" || fail "site/build.sh failed"
 [ -f "$PAGE" ] || fail "dist/index.html missing after build"
 [ -f "$DIST/install.sh" ] || fail "dist/install.sh missing (build must copy site/install.sh)"
 [ -f "$DIST/social-preview.png" ] || fail "dist/social-preview.png missing (build must copy site/assets/social-preview.png for og:image)"
-[ -f "$ROOT/site/assets/social-preview.png" ] || fail "site/assets/social-preview.png missing (tracked source of og:image; a card-only commit must touch site/ so Vercel deploys it)"
+[ -f "$ROOT/site/assets/social-preview.png" ] || fail "site/assets/social-preview.png missing (tracked source of og:image; a card-only commit must touch site/ so the Pages workflow deploys it)"
 [ -f "$ROOT/site/assets/board-kanban.png" ] || fail "site/assets/board-kanban.png missing (hero board capture)"
 [ -f "$ROOT/site/assets/board-kanban.webp" ] || fail "site/assets/board-kanban.webp missing (hero board capture)"
 

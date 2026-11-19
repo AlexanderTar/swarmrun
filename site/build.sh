@@ -5,7 +5,7 @@
 # dist/social-preview.png the social card served at /social-preview.png (og:image).
 # The card's tracked source is site/assets/social-preview.png (kept in sync with
 # assets/social-preview.png by assets/build-social-preview.sh) so that a
-# social-card-only commit still touches site/ and Vercel's ignoreCommand deploys it.
+# social-card-only commit still touches site/ and the Pages workflow's path filter deploys it.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

@@ -1,0 +1,53 @@
+name: Site deploy
+
+# Builds site/ into site/dist and publishes it to GitHub Pages, served at swarmrun.dev
+# (custom domain set in the repo's Pages settings). Runs on pushes to main that touch
+# the site, the design tokens or this workflow, and on manual dispatch. The site's
+# checks run in ci.yml's "Site landing page" job; this workflow only builds and deploys.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "design/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push waits instead of cancelling a deploy in flight.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node design/scripts/gen-tokens-css.mjs --check && sh site/build.sh
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
