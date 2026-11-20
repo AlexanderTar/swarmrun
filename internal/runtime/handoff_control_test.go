@@ -63,3 +63,52 @@ func TestSuccessorNeverSeesPredecessorHandoffControl(t *testing.T) {
 		}
 	}
 }
+
+// A row an older daemon wrote (the successor was started without retiring
+// the predecessor's handoff control) is swept at the next daemon start, so a
+// successor already running does not keep receiving it.
+func TestDaemonStartRetiresStaleHandoffControl(t *testing.T) {
+	s, tm, _ := newStore(t)
+	ctx := context.Background()
+	orch, _, _ := worker(t, s)
+	pred, err := s.LatestSession(ctx, orch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetSessionState(ctx, pred.ID, Running); err != nil {
+		t.Fatal(err)
+	}
+	panes(tm)
+	if _, err := s.RequestReplacement(ctx, orch.ID, ModeHandoff, "old-binary", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ResumeOperations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	succ, err := s.LatestSession(ctx, orch.ID)
+	if err != nil || succ.ID == pred.ID {
+		t.Fatalf("setup: no successor session started (%v)", err)
+	}
+	// Put the row back the way an old binary left it.
+	if _, err := s.DB.ExecContext(ctx, `UPDATE messages SET state = 'pending', acked_at = NULL
+		WHERE kind = 'control' AND to_agent_id = ?`, orch.ID); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.Sync(ctx, succ.ID, nil, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := controlActions(t, res); len(got) == 0 {
+		t.Fatal("setup: the stale control row should reach the successor before the sweep")
+	}
+	if err := s.ResumeOperations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	res, err = s.Sync(ctx, succ.ID, nil, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := controlActions(t, res); len(got) != 0 {
+		t.Fatalf("after the daemon-start sweep the successor got control actions %v, want none", got)
+	}
+}

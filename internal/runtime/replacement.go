@@ -605,6 +605,15 @@ func (s *Store) autoRestart(ctx context.Context, agentID string) bool {
 // intent first, so an agent the limit paused earlier resumes earlier (spec
 // 2026-09-27-single-agent-limit-live decision 6).
 func (s *Store) ResumeOperations(ctx context.Context) error {
+	// Handoff controls an older daemon left for a predecessor that a newer
+	// session has since replaced (BUG-164) are retired once, at daemon start.
+	if _, err := s.DB.ExecContext(ctx, `UPDATE messages SET state = 'acked', acked_at = ?
+		WHERE kind = 'control' AND state <> 'acked'
+		AND json_extract(payload_json, '$.action') = 'handoff'
+		AND EXISTS (SELECT 1 FROM sessions se WHERE se.agent_id = messages.to_agent_id
+			AND se.started_at > messages.created_at)`, db.Millis(s.now())); err != nil {
+		return err
+	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM agent_operations WHERE phase IN
 		('requested', 'preserving', 'stopping', 'ready', 'queued', 'starting') ORDER BY created_at, id`)
 	if err != nil {
