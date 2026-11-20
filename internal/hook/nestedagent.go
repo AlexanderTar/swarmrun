@@ -14,12 +14,17 @@ import (
 // It is a small quote-aware shell scanner, not a full parser. It follows the
 // forms that start a command (separators, subshells, $( ), backticks, <( ),
 // env-style assignments, exec/nohup/sudo/env wrappers) and recurses into code
-// strings (sh -c, bash -c, eval, and command substitutions). Anything it
-// cannot read it treats as a block, so the guard fails closed.
+// strings (sh -c, bash -c, eval, and command substitutions). It blocks only
+// what it recognises as starting the agent, and only runaway nesting beyond
+// maxShellDepth is blocked unread; it does not fail closed on input it cannot
+// read.
 //
 // Known limits, shared with the regex it replaces: a command name produced by
-// a variable or glob (`$c`, `cl*de`), a script fed on stdin by a pipe
-// (`echo claude | sh`), and wrappers it does not know.
+// a variable, glob or brace expansion (`$c`, `cl*de`, `{claude,}`), a name in
+// another letter case (`Claude`, which runs on a case-insensitive file
+// system such as macOS), a script fed on stdin by a pipe (`echo claude | sh`),
+// the body of a heredoc to anything but a shell, and wrappers it does not
+// know.
 func isClaudeCommand(cmd string) bool {
 	return newShellScan(cmd, 0).blocked()
 }
@@ -34,6 +39,7 @@ var assignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=`)
 const (
 	shellMarker = "\x00"
 	shellRedir  = "\x01"
+	shellHere   = "\x02" // a here-string (<<<); its word is code for a shell
 )
 
 var shellNames = map[string]bool{
@@ -199,6 +205,11 @@ func (p *shellScan) list(sub bool) bool {
 				if p.shellSeen && newShellScan(body, p.depth+1).blocked() {
 					return true
 				}
+				// An unquoted delimiter lets the shell expand $( ) and
+				// backticks in the body, whatever reads the heredoc.
+				if !h.quoted && newShellScan(body, p.depth+1).heredocSubst() {
+					return true
+				}
 			}
 			heredocs = nil
 		case c == ';' || c == '&' || c == '|':
@@ -230,7 +241,12 @@ func (p *shellScan) list(sub bool) bool {
 				inWord = false
 			}
 			flush()
-			if c == '<' && p.peek(1) == '<' && p.peek(2) != '<' {
+			if c == '<' && p.peek(1) == '<' && p.peek(2) == '<' {
+				p.pos += 3
+				words = append(words, shellHere)
+				continue
+			}
+			if c == '<' && p.peek(1) == '<' {
 				p.pos += 2
 				tabs := p.peek(0) == '-'
 				if tabs {
@@ -385,8 +401,33 @@ func (p *shellScan) ansiC() string {
 }
 
 type heredoc struct {
-	delim string
-	tabs  bool
+	delim  string
+	tabs   bool
+	quoted bool // any quoting in the delimiter turns off expansion in the body
+}
+
+// heredocSubst scans a heredoc body (unquoted delimiter) for the command
+// substitutions the shell runs in it: $( ) and backticks, unless escaped.
+func (p *shellScan) heredocSubst() bool {
+	for p.pos < len(p.s) {
+		switch c := p.s[p.pos]; {
+		case c == '\\':
+			p.pos += 2
+		case c == '$' && p.peek(1) == '(':
+			p.pos += 2
+			if p.sub() {
+				return true
+			}
+		case c == '`':
+			p.pos++
+			if p.backtick() {
+				return true
+			}
+		default:
+			p.pos++
+		}
+	}
+	return false
 }
 
 // heredocStart reads the delimiter word after `<<` (quotes removed).
@@ -394,6 +435,7 @@ func (p *shellScan) heredocStart() heredoc {
 	for p.pos < len(p.s) && (p.s[p.pos] == ' ' || p.s[p.pos] == '\t') {
 		p.pos++
 	}
+	quoted := false
 	var b strings.Builder
 	for p.pos < len(p.s) {
 		c := p.s[p.pos]
@@ -401,13 +443,14 @@ func (p *shellScan) heredocStart() heredoc {
 			break
 		}
 		if c == '\'' || c == '"' || c == '\\' {
+			quoted = true
 			p.pos++
 			continue
 		}
 		b.WriteByte(c)
 		p.pos++
 	}
-	return heredoc{delim: b.String()}
+	return heredoc{delim: b.String(), quoted: quoted}
 }
 
 // heredocBody consumes lines up to the delimiter line and returns them.
@@ -437,19 +480,53 @@ func (p *shellScan) heredocBody(h heredoc) string {
 // checkWords judges one simple command's decoded words.
 func (p *shellScan) checkWords(raw []string) bool {
 	words := make([]string, 0, len(raw))
+	var here []string
 	for i := 0; i < len(raw); i++ {
-		if raw[i] == shellRedir {
+		switch raw[i] {
+		case shellRedir:
 			i++ // skip the redirect target
-			continue
+		case shellHere:
+			if i+1 < len(raw) {
+				here = append(here, raw[i+1])
+			}
+			i++
+		default:
+			words = append(words, raw[i])
 		}
-		words = append(words, raw[i])
 	}
-	return p.checkCommand(words)
+	if len(here) == 0 {
+		return p.checkCommand(words)
+	}
+	// A here-string is stdin: code when the command is a shell, data otherwise.
+	prev := p.shellSeen
+	p.shellSeen = false
+	if p.checkCommand(words) {
+		return true
+	}
+	isShell := p.shellSeen
+	p.shellSeen = prev || isShell
+	if !isShell {
+		return false
+	}
+	for _, h := range here {
+		if newShellScan(h, p.depth+1).blocked() {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *shellScan) checkCommand(words []string) bool {
 	for i := 0; i < len(words); {
 		w := words[i]
+		if w == "coproc" {
+			// coproc [NAME] command: NAME only precedes a compound command.
+			if i+2 < len(words) && words[i+2] == "{" {
+				i++
+			}
+			i++
+			continue
+		}
 		if assignRe.MatchString(w) || reservedWords[w] {
 			i++
 			continue
@@ -566,7 +643,7 @@ func skipWrapperOptions(words []string, i int, argOpts map[string]bool, assigns 
 		switch {
 		case w == "--":
 			return i + 1
-		case strings.HasPrefix(w, "-") && w != "-":
+		case strings.HasPrefix(w, "-") && (w != "-" || assigns): // env - is env -i
 			i++
 			if argOpts[w] {
 				i++

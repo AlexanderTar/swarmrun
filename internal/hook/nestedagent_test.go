@@ -234,6 +234,53 @@ func TestIsClaudeCommandBlocksWrapperForms(t *testing.T) {
 	}
 }
 
+// Review round: forms the shell itself runs as code that the first rewrite let
+// through. An unquoted heredoc delimiter makes the shell expand $( ) and
+// backticks in the body; coproc, a here-string to a shell and `env -` all run
+// the agent too.
+func TestIsClaudeCommandBlocksReviewGaps(t *testing.T) {
+	for _, s := range []string{
+		"cat <<EOF\n$(claude -p hi)\nEOF",
+		"cat <<EOF\n`claude -p hi`\nEOF",
+		"cat <<EOF > out\n${x:-$(claude)}\nEOF",
+		"cat <<-EOF\n\t$(claude)\n\tEOF",
+		"cat <<EOF\nok \\\\$(claude)\nEOF",
+		`coproc claude`,
+		`coproc claude -p hi`,
+		`coproc NAME { claude -p hi; }`,
+		`bash <<< 'claude -p hi'`,
+		`sh <<<"claude"`,
+		`env X=1 bash <<< "ls; claude"`,
+		`env - claude -p hi`,
+		`env - X=1 claude`,
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (real invocation)", s)
+		}
+	}
+}
+
+// Their data-only neighbours stay allowed: a quoted or escaped heredoc
+// delimiter means no expansion, a here-string to a non-shell is input data.
+func TestIsClaudeCommandAllowsReviewData(t *testing.T) {
+	for _, s := range []string{
+		"cat <<'EOF'\n$(claude -p hi)\nEOF",
+		"cat <<\"EOF\"\n$(claude -p hi)\nEOF",
+		"cat <<\\EOF\n`claude`\nEOF",
+		"cat <<EOF\n\\$(claude)\nEOF",
+		"cat <<EOF\ndocs mention claude and $(date)\nEOF",
+		`grep claude <<< 'claude -p hi'`,
+		`cat <<< "claude"`,
+		`coproc grep claude`,
+		`coproc NAME { grep claude; }`,
+		`env - ls claude`,
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (data)", s)
+		}
+	}
+}
+
 // The same wrappers around an ordinary command, and read-only lookups of the
 // agent's name, are not invocations.
 func TestIsClaudeCommandAllowsWrapperData(t *testing.T) {
