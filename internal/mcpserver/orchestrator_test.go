@@ -2675,6 +2675,65 @@ func TestSwarmItemsCrossRootEditOnDraftRoot(t *testing.T) {
 	}
 }
 
+// BUG-176: a cross-root task create whose blocked_by is a sibling in the same foreign root succeeds; a
+// dependency in some other root is refused with an error that names the dependency, and the refused
+// create does not burn a key.
+func TestSwarmItemsCrossRootCreateAllowsSameRootBlockedBy(t *testing.T) {
+	s, seed := newOrchestratorServer(t)
+	ctx := context.Background()
+	mk := func(args string) string {
+		t.Helper()
+		out, err := s.call(ctx, seed.Caller, "swarm_items", args)
+		if err != nil {
+			t.Fatalf("%s: %v", args, err)
+		}
+		var it struct {
+			Key string `json:"key"`
+		}
+		json.Unmarshal(mustJSON(out), &it)
+		return it.Key
+	}
+	chore := mk(`{"op":"create","type":"chore","title":"Proposal"}`)
+	sibling := mk(`{"op":"create","type":"task","parent":"` + chore + `","title":"First","brief":"b","acceptance":["a"],"workflow":{"template":"tdd-reviewed"}}`)
+	body := func(blockedBy string) string {
+		return `{"op":"create","type":"task","parent":"` + chore + `","title":"Second","brief":"b","acceptance":["a"],` +
+			`"blocked_by":"` + blockedBy + `","workflow":{"template":"tdd-reviewed"}}`
+	}
+	// A dependency in the actor's own root is not in the new item's root: refused, naming the dependency.
+	_, err := s.call(ctx, seed.Caller, "swarm_items", body(seed.OtherTaskKey))
+	if err == nil || !strings.Contains(err.Error(), seed.OtherTaskKey) ||
+		!strings.Contains(err.Error(), "same root as the new item") {
+		t.Fatalf("foreign dependency err = %v", err)
+	}
+	if got, gerr := s.RT.Items.Get(ctx, "TASK-"+strconv.Itoa(taskNumber(t, sibling)+1)); gerr == nil {
+		t.Fatalf("refused create left %s behind", got.Key)
+	}
+	out, err := s.call(ctx, seed.Caller, "swarm_items", body(sibling))
+	if err != nil {
+		t.Fatalf("same-root blocked_by refused: %v", err)
+	}
+	var it struct {
+		Key       string   `json:"key"`
+		BlockedBy []string `json:"blocked_by"`
+	}
+	json.Unmarshal(mustJSON(out), &it)
+	if len(it.BlockedBy) != 1 || it.BlockedBy[0] != sibling {
+		t.Fatalf("blocked_by = %v, want [%s]", it.BlockedBy, sibling)
+	}
+	if want := "TASK-" + strconv.Itoa(taskNumber(t, sibling)+1); it.Key != want {
+		t.Fatalf("key = %s, want %s (the refused create burned a key)", it.Key, want)
+	}
+}
+
+func taskNumber(t *testing.T, key string) int {
+	t.Helper()
+	n, err := strconv.Atoi(strings.TrimPrefix(key, "TASK-"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 // ---------- user-requested overrides only (2026-09-26 worker-defaults spec) ----------
 
 const wantOverrideReasonCopy = "Pass override_reason with agent, model or effort, saying what the user asked for. Leave agent, model and effort empty to use the user's role default."

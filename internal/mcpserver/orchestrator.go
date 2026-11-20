@@ -260,7 +260,7 @@ func itemsTool(s *Server) ToolDef {
 							return err
 						}
 						if in.BlockedBy != "" {
-							if err := s.RT.Items.AddDepTx(ctx, tx, out.Key, in.BlockedBy, actor); err != nil {
+							if err := s.RT.Items.AddDepForNewTx(ctx, tx, out.Key, in.BlockedBy, actor); err != nil {
 								return err
 							}
 						}

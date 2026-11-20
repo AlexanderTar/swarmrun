@@ -42,6 +42,18 @@ func (s *Store) AddDep(ctx context.Context, key, blockedBy string, by Actor) err
 // does not wake SSE subscribers itself: the caller commits its own tx, so the
 // caller is responsible for calling Events.Notify() after that commit.
 func (s *Store) AddDepTx(ctx context.Context, tx *sql.Tx, key, blockedBy string, by Actor) error {
+	return s.addDepTx(ctx, tx, key, blockedBy, by, false)
+}
+
+// AddDepForNewTx is AddDepTx for the item the caller created in this same transaction. CreateTx has already
+// decided the actor may write there (a cross-root create passed the Draft/Ready-root check), so the new
+// item's own root is not re-checked; its dependency must sit in that same root, because the actor has no
+// right to touch any other.
+func (s *Store) AddDepForNewTx(ctx context.Context, tx *sql.Tx, key, blockedBy string, by Actor) error {
+	return s.addDepTx(ctx, tx, key, blockedBy, by, true)
+}
+
+func (s *Store) addDepTx(ctx context.Context, tx *sql.Tx, key, blockedBy string, by Actor, isNew bool) error {
 	a, err := s.getTx(ctx, tx, key)
 	if err != nil {
 		return err
@@ -50,7 +62,11 @@ func (s *Store) AddDepTx(ctx context.Context, tx *sql.Tx, key, blockedBy string,
 	if err != nil {
 		return err
 	}
-	if err := s.orchestratorScope(ctx, tx, by, a); err != nil {
+	if isNew && by.isOrchestrator() && a.RootID != by.RootID {
+		if b.RootID != a.RootID {
+			return errf(CodeBadRequest, "%s is in a different root. Dependencies of an item created in another root must be in the same root as the new item.", b.Key)
+		}
+	} else if err := s.orchestratorScope(ctx, tx, by, a); err != nil {
 		return err
 	}
 	if a.ID == b.ID {
