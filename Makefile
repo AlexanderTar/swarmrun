@@ -81,7 +81,8 @@ install: install-daemon $(MENUBAR_INSTALL)
 
 # Builds swarm into ~/.swarm/bin. On a Mac `build` already signed bin/swarm; the signed bytes are copied to a
 # temp file and renamed over the target, so the installed inode is never rewritten or re-signed in
-# place (that left launchd's respawn failing with OS_REASON_CODESIGNING, BUG-74/76).
+# place (that left launchd's respawn failing with OS_REASON_CODESIGNING, BUG-74/76). It does not restart
+# the daemon: run `make restart-daemon` for that, never `launchctl kickstart -k` (BUG-165/188).
 install-daemon: build
 	mkdir -p $(PREFIX)/bin
 	install -m 0755 bin/swarm $(PREFIX)/bin/.swarm.new

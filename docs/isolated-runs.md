@@ -53,6 +53,27 @@ env -i PATH="$S/shim:/usr/bin:/bin:/opt/homebrew/bin" HOME="$S/fakehome" USER=te
 - If a test run might have touched launchd, check at once: `launchctl print gui/$(id -u)/dev.swarm.daemon | grep -E 'state|pid'`. To restore it: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.swarm.daemon.plist`.
 - On Linux, check with `systemctl --user status dev.swarm.daemon.service`, and restore it with `systemctl --user enable --now dev.swarm.daemon.service`.
 
+## Restarting the daemon after `make install`
+
+The user restarts the live daemon with one command: `make restart-daemon` (it runs `make install-daemon`, then `~/.swarm/bin/swarm restart`). `swarm restart` is `bootout`, a wait until `launchctl print gui/$(id -u)/dev.swarm.daemon` fails, then `bootstrap`, retried on exit 5 for up to 30 s (`launchdService.Start`, `internal/install/service.go`). On Linux it is `systemctl --user restart`. It leaves the agents' configuration alone, unlike `swarm install`. An agent never runs it, nor `kickstart`, `bootout`, `bootstrap` or `kill` on the live job: the daemon hosts every running agent, and the restart drops the board for some seconds.
+
+Two failures used to make the restart unreliable (BUG-165, BUG-188; evidence: the crash reports `~/Library/Logs/DiagnosticReports/swarm-*.ips`):
+
+- **`launchctl kickstart -k` after replacing the binary.** launchd respawns `~/.swarm/bin/swarm` under the job's existing launch constraint (a managed LWCR from Background Task Management). Each build has a new cdhash and the daemon is self-signed with no Team ID, so the stale constraint rejects the new binary and the kernel kills it: `EXC_CRASH`, `SIGKILL (Code Signature Invalid)`, `Launch Constraint Violation`. launchd then shows `spawn failed`, `last exit reason = OS_REASON_CODESIGNING` and `needs LWCR update | managed LWCR`. KeepAlive respawns it every 10 s, so it often recovers after 10-30 s, and sometimes does not. A job registered fresh by `bootstrap` carries no stale constraint. This is inferred from crash reports and launchd's properties; it was not reproduced on a throwaway job.
+- **`bootout` followed straight away by `bootstrap`.** `bootout` returns once the daemon has been signalled (0.03 s); the job stays loaded until the daemon has drained, which takes seconds. A `bootstrap` in that window fails with `Bootstrap failed: 5: Input/output error`. This was reproduced: success came 3.2 s after `bootout` on a job that needs 3 s to exit.
+
+Never: `launchctl kickstart -k gui/$(id -u)/dev.swarm.daemon` after replacing the binary, and back-to-back `bootout; bootstrap`. Use `make restart-daemon`. Do not write the old `kickstart -k` line in new plans, specs or briefs (the ones in `docs/plans` and `docs/specs` are history).
+
+Detect it: `launchctl print gui/$(id -u)/dev.swarm.daemon | grep -E 'state =|last exit|properties|pid'`. `spawn failed` plus `OS_REASON_CODESIGNING` plus `needs LWCR update` is the first failure; look for `"indicator":"Launch Constraint Violation"` in `~/Library/Logs/DiagnosticReports/swarm-*.ips`. To recover, run `swarm restart` (or `make restart-daemon`), not another `kickstart`.
+
+Traps:
+
+- `codesign --verify --strict ~/.swarm/bin/swarm` passes and the binary runs by hand, so it looks like a signing bug. It is not: the binary violates the job's launch constraint, not its own signature.
+- It can recover by itself in 10-30 s through the throttled respawn, so a short outage does not prove the restart worked. Check `state = running` and a new `pid`.
+- Exit 5 from `bootstrap` means "still unloading", not a bad plist. A bad plist gives exit 122 or similar, and `Start` does not retry it.
+- Tests for this path script the runner (`scripted` in `internal/install/service_start_test.go`) and replace `launchdSleep`, so they never wait or touch launchd. `execx.Fake` returns one answer per command, so it cannot express "print succeeds twice, then fails"; use `scripted`. Any `launchctl print` error counts as "unloaded", so a `Fake` without a `print` answer reads as already gone.
+- Signing the daemon with a Developer ID would let the constraint survive rebuilds. That is a separate decision.
+
 ## Guards
 
 | Rule | Test |
@@ -62,4 +83,5 @@ env -i PATH="$S/shim:/usr/bin:/bin:/opt/homebrew/bin" HOME="$S/fakehome" USER=te
 | A non-default home never touches agent configs | `TestIsolatedInstallAndUninstallLeaveUserAgentConfigsAlone` |
 | `swarm migrate` refuses a non-default home without `--live` | `TestMigrateRefusesANonDefaultHomeWithoutLive` (`cmd/swarm`) |
 | The default home is unchanged | `TestNonIsolatedInstallStillTouchesLaunchd`, `TestInstallAndUninstallIsolateANonDefaultHome` (`cmd/swarm`) |
+| Restart waits for the unload, retries bootstrap on exit 5 and never kickstarts | `TestStart*`, `TestRestart*` (`internal/install`), `TestRestartCommand*` (`cmd/swarm`) |
 | Tests cannot run the real `launchctl`, `systemctl` or `loginctl` | `TestRealRunnersRefuseLaunchctlUnderGoTest` (`internal/execx`) |
