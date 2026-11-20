@@ -1,8 +1,12 @@
 package install
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -162,5 +166,66 @@ func TestStartDoesNotRetryOtherBootstrapErrors(t *testing.T) {
 	}
 	if n := count(s.calls, boot); n != 1 {
 		t.Fatalf("bootstrap ran %d times, want 1", n)
+	}
+}
+
+// Restart is what `swarm restart` and `make restart-daemon` run after the binary
+// was swapped: bootout, wait for the unload, bootstrap, and never kickstart.
+func TestRestartBootsOutWaitsAndBootstrapsWithoutKickstart(t *testing.T) {
+	noSleep(t)
+	c := testConfig(t)
+	writePlist(t, c)
+	boot := cmdBootstrap + PlistPath(c)
+	s := &scripted{steps: map[string][]error{cmdBootout: {nil}, cmdPrint: {nil, errNotFound}, boot: {errBusy, nil}}}
+	var out bytes.Buffer
+	if err := Restart(bg, c, s.runner(), &out); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{cmdBootout, cmdPrint, cmdPrint, boot, boot}
+	if !slices.Equal(s.calls, want) {
+		t.Fatalf("calls = %v, want %v", s.calls, want)
+	}
+	for _, call := range s.calls {
+		if strings.Contains(call, "kickstart") {
+			t.Fatalf("restart used kickstart: %s", call)
+		}
+	}
+	if !strings.Contains(out.String(), "Restarted") {
+		t.Errorf("output = %q", out.String())
+	}
+}
+
+// An isolated home must not reach the machine-wide launch agent (BUG-100).
+func TestRestartLeavesAnIsolatedHomeAlone(t *testing.T) {
+	c := testConfig(t)
+	c.Isolated = true
+	writePlist(t, c)
+	s := &scripted{}
+	var out bytes.Buffer
+	if err := Restart(bg, c, s.runner(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.calls) != 0 || !strings.Contains(out.String(), "--live") {
+		t.Fatalf("calls = %v, out = %q", s.calls, out.String())
+	}
+}
+
+// Without a plist there is nothing to bootstrap; say so instead of failing with exit 5/113.
+func TestRestartNeedsAnInstalledPlist(t *testing.T) {
+	c := testConfig(t)
+	s := &scripted{}
+	err := Restart(bg, c, s.runner(), io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "swarm install") || len(s.calls) != 0 {
+		t.Fatalf("err = %v, calls = %v", err, s.calls)
+	}
+}
+
+func writePlist(t *testing.T, c Config) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(PlistPath(c)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(PlistPath(c), Plist(c), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -30,6 +30,7 @@ var (
 	goos               = runtime.GOOS
 	dirExists          = func(p string) bool { fi, err := os.Stat(p); return err == nil && fi.IsDir() }
 	installLaunchd     = install.Install
+	restartDaemon      = install.Restart
 	installAgents      = install.Agents
 	installUninstall   = install.Uninstall
 	doctorLegacyChecks = func(ctx context.Context, d install.Doctor) []install.Check { return d.LegacyChecks(ctx) }
@@ -254,6 +255,26 @@ func cmdInstall(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if err := installAgents(context.Background(), o); err != nil {
+		return fail(stderr, err)
+	}
+	return 0
+}
+
+// cmdRestart restarts the installed daemon (bootout, wait, bootstrap) after
+// `make install` swapped the binary. Unlike install it leaves the agents'
+// configuration alone.
+func cmdRestart(args []string, stdout, stderr io.Writer) int {
+	fs, home, _ := flags("restart", stderr, false)
+	live := fs.Bool("live", false, liveUsage)
+	if code, done := parse(fs, args); done {
+		return code
+	}
+	cfg, err := newConfig(*home)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	isolate(&cfg, *live)
+	if err := restartDaemon(context.Background(), cfg, execx.Run, stdout); err != nil {
 		return fail(stderr, err)
 	}
 	return 0

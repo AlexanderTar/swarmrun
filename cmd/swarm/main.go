@@ -17,6 +17,7 @@ const usage = `Usage: swarm <command> [flags]
 Commands:
   daemon [--port N]                run the daemon (launchd or systemd starts it)
   install [--plugins] [--yes] [--live]  set up the daemon service, agent integrations and the superpowers plugins
+  restart [--live]                 restart the installed daemon (use after make install; never launchctl kickstart -k)
   uninstall [--live]               remove the daemon service and agent integrations (keeps data)
   migrate [--dry-run | --resume | --rollback] [--live]   import Swarm 1.x data and cut over
   doctor [--json] [--legacy]       check prerequisites, agents, skills, Ollama, signing; --legacy reports 1.x state
@@ -80,6 +81,8 @@ func runWithStdin(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 		return cmdDaemon(args[1:], stdout, stderr)
 	case "install":
 		return cmdInstall(args[1:], stdout, stderr)
+	case "restart":
+		return cmdRestart(args[1:], stdout, stderr)
 	case "uninstall":
 		return cmdUninstall(args[1:], stdout, stderr)
 	case "migrate":

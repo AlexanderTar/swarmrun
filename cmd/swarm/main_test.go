@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -1298,5 +1300,41 @@ func TestIsolatedInstallDryRunDoesNotClaimAgentConfig(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "write the agent configuration") {
 		t.Errorf("output = %q", out.String())
+	}
+}
+
+// swarm restart restarts the installed daemon without touching agent
+// configuration, and an isolated home needs --live like install does.
+func TestRestartCommandIsolatesANonDefaultHome(t *testing.T) {
+	saved, savedAgents := restartDaemon, installAgents
+	t.Cleanup(func() { restartDaemon, installAgents = saved, savedAgents })
+	installAgents = func(context.Context, install.AgentsOpts) error {
+		t.Error("restart must not rewrite agent configuration")
+		return nil
+	}
+	t.Setenv("HOME", t.TempDir())
+	var got []bool
+	restartDaemon = func(_ context.Context, c install.Config, _ execx.Runner, _ io.Writer) error {
+		got = append(got, c.Isolated)
+		return nil
+	}
+	scratch := t.TempDir()
+	for _, args := range [][]string{{"restart", "--home", scratch}, {"restart", "--live", "--home", scratch}} {
+		if code := run(args, io.Discard, io.Discard); code != 0 {
+			t.Fatalf("%v: code = %d", args, code)
+		}
+	}
+	if !slices.Equal(got, []bool{true, false}) {
+		t.Errorf("Isolated = %v, want [true false]", got)
+	}
+}
+
+func TestRestartCommandReportsFailure(t *testing.T) {
+	saved := restartDaemon
+	t.Cleanup(func() { restartDaemon = saved })
+	restartDaemon = func(context.Context, install.Config, execx.Runner, io.Writer) error { return errors.New("boom") }
+	var errOut bytes.Buffer
+	if code := run([]string{"restart", "--home", t.TempDir()}, io.Discard, &errOut); code == 0 || !strings.Contains(errOut.String(), "boom") {
+		t.Fatalf("code = %d, stderr = %q", code, errOut.String())
 	}
 }

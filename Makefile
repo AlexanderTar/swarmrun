@@ -13,7 +13,7 @@ endif
 MENUBAR_TEST := $(if $(filter Darwin,$(UNAME_S)),test-menubar)
 MENUBAR_INSTALL := $(if $(filter Darwin,$(UNAME_S)),install-app)
 
-.PHONY: build web-build vet fmt staticcheck web-lint lint test test-go test-web test-menubar e2e dev dev-seed install install-daemon install-app app skills-sync
+.PHONY: build web-build vet fmt staticcheck web-lint lint test test-go test-web test-menubar e2e dev dev-seed install install-daemon restart-daemon install-app app skills-sync
 
 APP_DIR ?= /Applications
 
@@ -86,6 +86,13 @@ install-daemon: build
 	mkdir -p $(PREFIX)/bin
 	install -m 0755 bin/swarm $(PREFIX)/bin/.swarm.new
 	mv -f $(PREFIX)/bin/.swarm.new $(PREFIX)/bin/swarm
+
+# Restarts the live daemon from ~/.swarm/bin/swarm after install-daemon swapped the binary:
+# bootout, wait for the unload, bootstrap (bounded retry). Never `launchctl kickstart -k` for a replaced
+# binary: launchd respawns it under a stale launch constraint and the kernel kills it (OS_REASON_CODESIGNING).
+# The daemon is down for some seconds (agents keep running in tmux), so only the user runs it.
+restart-daemon: install-daemon
+	$(PREFIX)/bin/swarm restart
 
 # Deploys the tunnel relay to personal Railway (workspace "My Projects").
 # The bootstrap is idempotent: it ensures the project, service, secret,

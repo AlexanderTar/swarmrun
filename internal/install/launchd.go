@@ -206,6 +206,27 @@ func Install(ctx context.Context, c Config, run execx.Runner, dryRun bool, w io.
 	return nil
 }
 
+// Restart restarts the daemon from the already-installed service file: bootout,
+// wait for the unload, bootstrap (Service.Start). It is what runs after
+// `make install` swapped the binary, and it leaves the agents' configuration
+// alone. It never uses `launchctl kickstart -k`, which respawns a replaced
+// binary under launchd's stale launch constraint (OS_REASON_CODESIGNING).
+func Restart(ctx context.Context, c Config, run execx.Runner, w io.Writer) error {
+	svc := c.Service()
+	if c.Isolated {
+		fmt.Fprintf(w, "%s is not the default swarm home, so the %s %s was left alone. Pass --live to restart it anyway.\n", c.Home, Label, svc.Noun())
+		return nil
+	}
+	if _, err := os.Stat(svc.Path()); err != nil {
+		return fmt.Errorf("the %s is not installed (%s): run swarm install", svc.Noun(), svc.Path())
+	}
+	if err := svc.Start(ctx, run, w); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "Restarted the daemon (%s).\n", Label)
+	return nil
+}
+
 // NotLoaded reports whether a launchctl bootout error only means the job was not
 // loaded. internal/migrate needs the same judgement (§20 step 2).
 func NotLoaded(err error) bool { return notLoaded(err) }
