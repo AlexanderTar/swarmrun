@@ -2,7 +2,10 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
+
+	"github.com/AlexanderTar/swarmrun/internal/settings"
 )
 
 // exhaustedFixture drives the seeded build->review workflow through every
@@ -45,12 +48,40 @@ func TestResumeRetryAfterExhaustedRoundsSpawnsFreshAgentForFinishedBuilder(t *te
 	if err := s.SetSessionState(ctx, ses.ID, Completed); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.SetWorkerRoleOverrides(ctx, orch.ID, map[Role]settings.RoleDefault{
+		RoleCoder: {Agent: Fake, Model: "fake-1", Reason: "user asked"}}); err != nil {
+		t.Fatal(err)
+	}
+	// The exhausted round's reviewers still hold review worktrees.
+	var live int
+	countHeld := func() int {
+		var n int
+		if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM worktree_reservations wr
+			JOIN workflow_runs r ON r.review_worktree_id = wr.worktree_id AND r.agent_id = wr.agent_id
+			WHERE r.workflow_id = ? AND wr.released_at IS NULL`, wfID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if live = countHeld(); live == 0 {
+		t.Fatal("setup: no review worktree reservation held after the exhausted round")
+	}
 	if _, err := s.ResumeWorkflow(ctx, orch, ResumeWorkflowInput{ItemKey: taskKey, Decision: "retry", Note: "one more"}); err != nil {
 		t.Fatal(err)
 	}
 	got := newestBuildAgent(t, s, wfID)
 	if got == "" || got == builderID {
 		t.Fatalf("newest build run agent = %q, want a fresh agent (old %q)", got, builderID)
+	}
+	fresh, err := s.agentByID(ctx, got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fresh.KindReason, "user asked") {
+		t.Fatalf("fresh builder kind reason = %q, want it to record the role override set before the resume", fresh.KindReason)
+	}
+	if n := countHeld(); n != 0 {
+		t.Fatalf("%d review worktree reservations of the exhausted round still held after the bump, want 0", n)
 	}
 }
 

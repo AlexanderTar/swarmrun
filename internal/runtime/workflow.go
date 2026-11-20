@@ -2315,6 +2315,18 @@ func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, in ResumeWorkflo
 		if err := s.advance(context.WithoutCancel(ctx), wf.ID); err != nil {
 			return WorkflowState{}, err
 		}
+		if bumped {
+			// The bump skips applyRetryFix, which is what normally releases the
+			// finished round's review worktrees.
+			for _, st := range resumeSpec.EffectiveSteps() {
+				if len(st.Review) == 0 {
+					continue
+				}
+				if err := s.removeReviewWorktrees(ctx, wf, st.ID, wf.Round); err != nil {
+					s.logf("resume: remove review worktree for %s round %d: %v", st.ID, wf.Round, err)
+				}
+			}
+		}
 		if note != "" && !bumped {
 			var activeAgentID string
 			err := s.DB.QueryRowContext(ctx, `SELECT COALESCE(agent_id, '') FROM workflow_runs
