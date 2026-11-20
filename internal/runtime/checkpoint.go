@@ -584,21 +584,31 @@ func (s *Store) carriedEvidence(ctx context.Context, tx *sql.Tx, itemID, current
 }
 
 // earlierProof is one unit's red-before-green evidence from an agent that
-// ran the same step earlier in this workflow: when its green was recorded
-// and when that agent's activity ended (both unix milliseconds).
-type earlierProof struct{ greenMs, endMs int64 }
+// ran the same step earlier in this workflow: the rw worktree HEADs
+// recorded with its green (path -> sha) and when that agent's activity ended
+// (unix milliseconds).
+type earlierProof struct {
+	heads map[string]string
+	endMs int64
+}
 
 // carryFromEarlierAgents drops from left the units an earlier agent of this
 // step (a predecessor cancelled, crashed or replaced in the same workflow)
-// already proved, BUG-180. A unit carries only when this round's evidence
-// (entries) does not mention it -- touching it again needs its own red then
-// green -- and the new checkpoint's sha has a commit in its history made
-// after that agent's green and before its activity ended, so the work it
-// proved is in what is being completed.
-// ponytail: unit-to-commit is matched by commit time inside the agent's
-// window, not by commit content; two agents overlapping in time could
-// vouch for each other's commits. Upgrade: record the worktree HEAD on every
-// unit-tagged checkpoint and compare ancestry instead.
+// already proved, BUG-180. A unit carries only when
+//   - this round's evidence (entries) does not mention it (touching it again
+//     needs its own red then green),
+//   - its green was recorded with the worktree HEAD at that moment, and the
+//     first commit after that HEAD on the way to the new sha is a plain
+//     commit the earlier agent made while active (so it is in the history of
+//     what is being completed, not merged in and not the fresh agent's), and
+//   - no commit made after the earlier agent ended touches a file that
+//     commit changed (the unit's code did not change in this round).
+//
+// ponytail: the unit's commit is "the first commit after its green", which
+// holds for the one-commit-per-unit protocol (green, commit, next unit); two
+// greens recorded before a single commit anchor to the same commit. Change
+// detection is by file: a fresh agent editing a file a carried unit's commit
+// touched (even for another unit) forces new red/green or a waiver.
 func (s *Store) carryFromEarlierAgents(ctx context.Context, tx *sql.Tx, run workflowRun, a Agent, in CheckpointInput, entries []Verify, left []int) ([]int, error) {
 	if len(left) == 0 || len(in.Git) == 0 {
 		return left, nil
@@ -639,7 +649,7 @@ func (s *Store) carryFromEarlierAgents(ctx context.Context, tx *sql.Tx, run work
 			if err != nil {
 				return nil, err
 			}
-			if ok && s.commitInWindow(ctx, wts, in.Git, p) {
+			if ok && s.unitCommitCarries(ctx, wts, in.Git, p) {
 				carried = true
 				break
 			}
@@ -652,7 +662,9 @@ func (s *Store) carryFromEarlierAgents(ctx context.Context, tx *sql.Tx, run work
 }
 
 // earlierAgentProof finds unit's first red-then-green on agentID's
-// checkpoints and the end of that agent's activity.
+// checkpoints, the worktree HEADs recorded with that green, and the end of
+// that agent's activity. A green without recorded heads (written by an older
+// daemon) never carries.
 func (s *Store) earlierAgentProof(ctx context.Context, tx *sql.Tx, agentID string, unit int) (earlierProof, bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT created_at, verify_json FROM checkpoints
 		WHERE agent_id = ? ORDER BY created_at, rowid`, agentID)
@@ -681,11 +693,11 @@ func (s *Store) earlierAgentProof(ctx context.Context, tx *sql.Tx, agentID strin
 			case v.Phase == "red" && !v.OK:
 				red = true
 			case v.Phase == "green" && v.OK && red:
-				found, p.greenMs = true, at
+				found, p.heads = true, v.Heads
 			}
 		}
 	}
-	if err := rows.Err(); err != nil || !found {
+	if err := rows.Err(); err != nil || !found || len(p.heads) == 0 {
 		return earlierProof{}, false, err
 	}
 	var endedMs sql.NullInt64
@@ -696,26 +708,94 @@ func (s *Store) earlierAgentProof(ctx context.Context, tx *sql.Tx, agentID strin
 	return p, true, nil
 }
 
-// commitInWindow reports whether any declared sha, in any of the agent's rw
-// worktrees' repositories, has a commit made inside p's window in its history.
-func (s *Store) commitInWindow(ctx context.Context, wts []rwWorktree, refs []GitRef, p earlierProof) bool {
+func (s *Store) git(ctx context.Context, path string, args ...string) (string, error) {
 	runner := s.Exec
 	if runner == nil {
 		runner = execx.Run
 	}
-	since, until := fmt.Sprintf("--since=@%d", p.greenMs/1000), fmt.Sprintf("--until=@%d", p.endMs/1000+1)
+	out, err := runner(ctx, "git", append([]string{"-C", path}, args...)...)
+	return strings.TrimSpace(string(out)), err
+}
+
+// unitCommitCarries reports whether, in one of the agent's rw worktrees, a
+// declared sha's history holds the commit that followed p's recorded HEAD
+// (see carryFromEarlierAgents) and no later-round commit edited its files.
+func (s *Store) unitCommitCarries(ctx context.Context, wts []rwWorktree, refs []GitRef, p earlierProof) bool {
+	endSec := p.endMs / 1000
 	for _, w := range wts {
+		anchor := p.heads[w.Path]
+		if anchor == "" {
+			continue
+		}
 		for _, g := range refs {
 			if strings.HasPrefix(g.SHA, "-") {
 				continue // never let a declared sha pose as a git option
 			}
-			out, err := runner(ctx, "git", "-C", w.Path, "log", "-n1", "--format=%H", since, until, g.SHA)
-			if err == nil && strings.TrimSpace(string(out)) != "" {
+			// First commit descending from the anchor on the way to g.SHA.
+			out, err := s.git(ctx, w.Path, "rev-list", "--reverse", "--first-parent", "--ancestry-path", "--parents", anchor+".."+g.SHA)
+			first, _, _ := strings.Cut(out, "\n")
+			f := strings.Fields(first)
+			if err != nil || len(f) != 2 { // none, or a merge commit
+				continue
+			}
+			c := f[0]
+			ct, err := s.git(ctx, w.Path, "show", "-s", "--format=%ct", c)
+			if n, perr := strconv.ParseInt(ct, 10, 64); err != nil || perr != nil || n > endSec {
+				continue
+			}
+			files, err := s.git(ctx, w.Path, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", c)
+			if err != nil {
+				continue
+			}
+			later, err := s.git(ctx, w.Path, append([]string{"log", "--format=%ct", c + ".." + g.SHA, "--"}, strings.Split(files, "\n")...)...)
+			if err != nil {
+				continue
+			}
+			changed := false
+			for _, l := range strings.Fields(later) {
+				if n, perr := strconv.ParseInt(l, 10, 64); perr != nil || n > endSec {
+					changed = true
+					break
+				}
+			}
+			if !changed {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// stampHeads returns vs with each unit-tagged green carrying the HEAD of
+// every rw worktree agentID holds, and every other entry stripped of heads:
+// they are the daemon's anchors, never the agent's claim.
+func (s *Store) stampHeads(ctx context.Context, tx *sql.Tx, agentID string, vs []Verify) []Verify {
+	out := slices.Clone(vs)
+	var heads map[string]string
+	loaded := false
+	for i, v := range out {
+		out[i].Heads = nil
+		if v.Unit == 0 || v.Phase != "green" || !v.OK {
+			continue
+		}
+		if !loaded {
+			loaded = true
+			wts, err := s.rwWorktreesFor(ctx, tx, agentID)
+			if err != nil {
+				continue
+			}
+			for _, w := range wts {
+				if h, err := s.gitHead(ctx, w.Path); err == nil {
+					if heads == nil {
+						heads = map[string]string{}
+					}
+					heads[w.Path] = h
+				}
+			}
+		}
+		out[i].Heads = heads
+	}
+	return out
 }
 
 // findFixStepsFor returns every review step in spec whose loop retries
@@ -2049,6 +2129,7 @@ func (s *Store) WriteCheckpoint(ctx context.Context, sessionID string, in Checkp
 
 		ckpID := ids.New("ckp")
 		now := s.Now()
+		in.Verification = s.stampHeads(ctx, tx, a.ID, in.Verification)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO checkpoints (id, session_id, agent_id, item_id, kind,
 			attempt, resolution, summary, next_json, blockers_json, git_json, verify_json, artifacts_json,
 			processed_json, verdict, findings_json, todos_json, finish_options_json, daemon_written, created_at)
