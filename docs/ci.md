@@ -123,11 +123,13 @@ Two test-only bugs failed CI or hung the runtime suite. Both are timing-dependen
   out=<your scratch dir>                                   # not /tmp: keep test binaries in your own scratchpad
   go test -race -c -o "$out/tunnel.test" ./internal/tunnel
   go test -race -c -o "$out/runtime.test" ./internal/runtime
+  trap 'kill $(jobs -p) 2>/dev/null' EXIT INT TERM      # burners die even if a run times out or is interrupted
   for i in 1 2 3 4; do (while :; do :; done) & done      # CPU burners
   (cd internal/tunnel && GOMAXPROCS=2 "$out/tunnel.test" -test.count=20000 -test.run TestClientResetsBackoffAfterAStableSession)
   (cd internal/runtime && GOMAXPROCS=2 "$out/runtime.test" -test.count=3000 -test.timeout 550s -test.run TestReconcileLoopMeasuresThePeriodFromTheTickStart)
   kill $(jobs -p)                                         # stop the burners
   ```
+  Run the recipe in one shell script or one foreground command. A burner started from a backgrounded or timed-out tool call outlives it (re-parented to launchd) and keeps a core busy, which slows every later test run on the machine. Check afterwards: `ps -Ao pid,ppid,etime,command | awk '$2==1 && /while :; do :; done/'` must print nothing; `kill` any PID it lists.
   Unburdened repros that run in CI's budget: `go test -race -count=50 -run TestClientResetsBackoffAfterAStableSession ./internal/tunnel` and `go test -race -count=300 -timeout 300s -run TestReconcileLoopMeasuresThePeriodFromTheTickStart ./internal/runtime/`. Always pass `-count=N` (never the test cache) and a `-timeout` well below 30 m, so a hang is a quick failure.
 - **Trap:** a 30 m suite timeout hides which test hung: the failure is just `panic: test timed out`, and the first goroutine listed is the test runner. Read the dump for the line `running tests:` and for goroutines marked `chan send` or `chan receive` with minutes next to them; the test's own file and line (the `s.After` stub in `TestReconcileLoopMeasuresThePeriodFromTheTickStart`, `reconcile_test.go:259` on the base) is the stub that blocked. Rerunning the suite and getting a pass does not mean it was fixed.
 - **Check other tests before closing a similar bug:** `grep -rn "After = func\|\.After:" internal --include='*_test.go'` lists every fake-timer stub. The ones that return a never-fired channel (`make(chan time.Time)`), a one-shot buffered tick or a closed channel never block. The `internal/catalog/service_test.go` stubs send on an unbuffered `waiting` channel as a deliberate handshake with the test, which reads exactly as many as the loop sends: keep that count in step if you change what the loop does per tick.
