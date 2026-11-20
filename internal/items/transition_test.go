@@ -1674,3 +1674,48 @@ func TestMoveOutOfReviewStalesApprovedFinishOnlyForAnExplicitActor(t *testing.T)
 		})
 	}
 }
+
+// BUG-183 narrowed the "used approval" exclusion to finishes that completed. A finish whose PR is still
+// open keeps BUG-116/119: a manual move out of review, an edit or a waiver costs the approval.
+func TestFinishApprovalStaledWhileFinishInFlight(t *testing.T) {
+	orch := func(e items.Item) items.Actor { return items.Orchestrator("agt_o", e.ID) }
+	cases := []struct {
+		name   string
+		state  string
+		change func(t *testing.T, s *items.Store, e items.Item)
+	}{
+		{"move out of review", "open", func(t *testing.T, s *items.Store, e items.Item) {
+			if err := move(t, s, e.Key, items.InProgress, orch(e)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"title edit", "open", func(t *testing.T, s *items.Store, e items.Item) {
+			title := "Renamed"
+			if _, err := s.Update(ctx, e.Key, items.Patch{Title: &title, Revision: e.Revision}, user); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"waiver", "open", func(t *testing.T, s *items.Store, e items.Item) {
+			if _, err := s.Update(ctx, e.Key, items.Patch{Revision: e.Revision,
+				Waive: []items.WaiveInput{{Gate: items.WaivableGates[0], Reason: "flaky CI"}}}, orch(e)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := newStore(t)
+			e, ckp := finishRoot(t, s, items.Epic)
+			approveFinish(t, s, e, "manual")
+			insertMerge(t, s, e, ckp, "a", c.state)
+			s.Reconcile(ctx, e.Key)
+			wantStatus(t, s, e.Key, items.InReview)
+			c.change(t, s, mustGet(t, s, e.Key))
+			s.Reconcile(ctx, e.Key)
+			if _, ok, err := s.FinishApprovalTx(ctx, s.DB, e.ID); err != nil || ok {
+				t.Fatalf("approval still live after the change: ok = %v, err = %v", ok, err)
+			}
+			wantStatus(t, s, e.Key, items.InProgress)
+		})
+	}
+}

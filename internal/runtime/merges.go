@@ -917,7 +917,8 @@ func (s *Store) integratesNewWork(ctx context.Context, tx *sql.Tx, itemID, newCk
 	}
 	if len(git) == 0 {
 		var n int
-		err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE root_id = ? AND id <> ? AND created_at > ?`,
+		err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE root_id = ? AND id <> ? AND created_at > ?
+			AND archived_at IS NULL AND status <> 'cancelled'`,
 			itemID, itemID, priors[0].at).Scan(&n)
 		return n > 0, err
 	}

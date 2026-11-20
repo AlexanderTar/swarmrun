@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -225,6 +226,26 @@ func TestGitlessIntegratedNeedsNewerChildToReopen(t *testing.T) {
 	write()
 	if st := itemStatus(t, s, key); st != items.InReview {
 		t.Fatalf("git-less integrated after a new task: status = %s, want in_review", st)
+	}
+}
+
+// A follow-up created by mistake and then cancelled or archived is no new work for a no-repo integrated.
+func TestGitlessIntegratedIgnoresCancelledAndArchivedChildren(t *testing.T) {
+	s, ses, key := customFinishFixture(t)
+	finishKept(t, s, ses)
+	for _, hide := range []string{`status = 'cancelled'`, `archived_at = ` + strconv.FormatInt(db.Millis(s.Now()), 10)} {
+		child, err := s.Items.Create(context.Background(), items.CreateInput{Type: items.Task, ParentKey: key, Title: "By mistake"}, items.User("board"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustExec(t, s.DB, `UPDATE items SET `+hide+`, updated_at = ? WHERE id = ?`, db.Millis(s.Now()), child.ID)
+	}
+	if _, err := s.WriteCheckpoint(context.Background(), ses, CheckpointInput{Kind: Integrated, Summary: "again",
+		FinishOptions: []FinishOption{{Label: "Accept as done"}}, Verification: []Verify{{Cmd: "true", Phase: "green", OK: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	if st := itemStatus(t, s, key); st != items.Done {
+		t.Fatalf("git-less integrated after only cancelled/archived tasks: status = %s, want done", st)
 	}
 }
 

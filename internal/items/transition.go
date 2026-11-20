@@ -160,10 +160,14 @@ func (s *Store) staleApprovedFinish(ctx context.Context, tx *sql.Tx, it Item, re
 		return nil
 	}
 	kind := acceptKind(it.Type)
-	// An approval whose finish is already recorded was used; follow-up work doesn't undo it (BUG-183).
+	// An approval whose finish completed was used; follow-up work doesn't undo it (BUG-183). A finish
+	// with an unmerged (open or closed) PR row is still in flight, so a move or edit costs its approval (BUG-116/119).
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM requests WHERE item_id = ? AND kind = ? AND state = 'approved'
-		AND NOT EXISTS (SELECT 1 FROM item_merges m WHERE m.item_id = requests.item_id
-			AND m.integrated_checkpoint = json_extract(requests.binding_json, '$.integrated_checkpoint'))
+		AND NOT (EXISTS (SELECT 1 FROM item_merges m WHERE m.item_id = requests.item_id
+				AND m.integrated_checkpoint = json_extract(requests.binding_json, '$.integrated_checkpoint'))
+			AND NOT EXISTS (SELECT 1 FROM item_merges m WHERE m.item_id = requests.item_id
+				AND m.integrated_checkpoint = json_extract(requests.binding_json, '$.integrated_checkpoint')
+				AND m.state <> 'merged'))
 		AND NOT EXISTS (SELECT 1 FROM checkpoints c WHERE c.item_id = requests.item_id
 			AND c.resolution = 'finished:' || json_extract(requests.binding_json, '$.integrated_checkpoint'))`, it.ID, kind)
 	if err != nil {
