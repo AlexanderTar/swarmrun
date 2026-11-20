@@ -2042,6 +2042,26 @@ func resumeBumpsRound(spec workflow.Spec, runs []wfRunRow, round, extraRounds in
 	return workflow.Next(spec, toWorkflowRuns(runs), round, extraRounds+1).Kind == workflow.ActionEscalate
 }
 
+// resumeRetryFixNeedsFreshBuilder reports whether granting one more extra
+// round hands the fix step back to a builder whose latest session already
+// finished (completed, failed, crashed, cancelled). Reviving that agent would
+// keep its old agent/model and ignore current role overrides and settings, so
+// the resume bumps the round instead and the engine spawns a fresh builder
+// (BUG-178). A builder with a live session keeps it: applyRetryFix closes and
+// retries it as in any fix round.
+func (s *Store) resumeRetryFixNeedsFreshBuilder(ctx context.Context, spec workflow.Spec, runs []wfRunRow, wf wfRow) bool {
+	act := workflow.Next(spec, toWorkflowRuns(runs), wf.Round, wf.ExtraRounds+1)
+	if act.Kind != workflow.ActionRetryFix {
+		return false
+	}
+	agentID, err := s.runAgentIDAt(ctx, wf.ID, act.StepID, wf.Round)
+	if err != nil || agentID == "" {
+		return false
+	}
+	ses, err := s.LatestSession(ctx, agentID)
+	return err == nil && slices.Contains([]SessionState{Completed, Failed, Crashed, Cancelled}, ses.State)
+}
+
 // appendWorkflowContext appends line to workflowID's own workflows.
 // context_json (fix round 2, finding 4): the same Context lines StartWorkflow
 // populates from swarm_workflow start's own input, and spawnRunAgent already
@@ -2189,7 +2209,8 @@ func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, in ResumeWorkflo
 				return err
 			}
 			newRound := wf.Round
-			bumped = it.Workflow != nil && resumeBumpsRound(resumeSpec, runs, wf.Round, wf.ExtraRounds)
+			bumped = it.Workflow != nil && (resumeBumpsRound(resumeSpec, runs, wf.Round, wf.ExtraRounds) ||
+				s.resumeRetryFixNeedsFreshBuilder(ctx, resumeSpec, runs, wf))
 			if bumped {
 				newRound++
 			}
@@ -2307,6 +2328,18 @@ func (s *Store) ResumeWorkflow(ctx context.Context, orch Agent, in ResumeWorkflo
 	case "retry":
 		if err := s.advance(context.WithoutCancel(ctx), wf.ID); err != nil {
 			return WorkflowState{}, err
+		}
+		if bumped {
+			// The bump skips applyRetryFix, which is what normally releases the
+			// finished round's review worktrees.
+			for _, st := range resumeSpec.EffectiveSteps() {
+				if len(st.Review) == 0 {
+					continue
+				}
+				if err := s.removeReviewWorktrees(ctx, wf, st.ID, wf.Round); err != nil {
+					s.logf("resume: remove review worktree for %s round %d: %v", st.ID, wf.Round, err)
+				}
+			}
 		}
 		if note != "" && !bumped {
 			var activeAgentID string

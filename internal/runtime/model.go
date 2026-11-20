@@ -208,6 +208,10 @@ type Verify struct {
 	// on a batched one (a fix-round finding with no unit). omitempty keeps
 	// it out of verify_json unless set, matching the lowercase-keys shape.
 	Unit int `json:"unit,omitempty"`
+	// Heads is daemon-written on a unit-tagged green: the HEAD of each rw
+	// worktree (path -> sha) when it was recorded, the anchor a fresh agent's
+	// tdd gate follows to the unit's commit (BUG-180). Never taken from input.
+	Heads map[string]string `json:"heads,omitempty"`
 }
 
 type Checkpoint struct {

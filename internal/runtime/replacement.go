@@ -605,6 +605,15 @@ func (s *Store) autoRestart(ctx context.Context, agentID string) bool {
 // intent first, so an agent the limit paused earlier resumes earlier (spec
 // 2026-09-27-single-agent-limit-live decision 6).
 func (s *Store) ResumeOperations(ctx context.Context) error {
+	// Handoff controls an older daemon left for a predecessor that a newer
+	// session has since replaced (BUG-164) are retired once, at daemon start.
+	if _, err := s.DB.ExecContext(ctx, `UPDATE messages SET state = 'acked', acked_at = ?
+		WHERE kind = 'control' AND state <> 'acked'
+		AND json_extract(payload_json, '$.action') = 'handoff'
+		AND EXISTS (SELECT 1 FROM sessions se WHERE se.agent_id = messages.to_agent_id
+			AND se.started_at > messages.created_at)`, db.Millis(s.now())); err != nil {
+		return err
+	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT id FROM agent_operations WHERE phase IN
 		('requested', 'preserving', 'stopping', 'ready', 'queued', 'starting') ORDER BY created_at, id`)
 	if err != nil {
@@ -1222,6 +1231,12 @@ func (s *Store) startSuccessor(ctx context.Context, op Operation, a Agent, lates
 		s.raisePreflightFailed(ctx, a, err)
 		return s.setPhase(ctx, op.ID, PhaseStarting, PhaseBlocked, err.Error())
 	}
+	// The predecessor is gone: its handoff notice is meaningless to the
+	// successor (BUG-164). Retire it before the successor can sync, and so
+	// also any such row an older daemon left behind.
+	if err := s.retireHandoffControl(ctx, a.ID); err != nil {
+		return err
+	}
 	succ, err := s.startSession(ctx, a, attempt, latest.Generation+1, false, "", succMode)
 	if err != nil {
 		return s.setPhase(ctx, op.ID, PhaseStarting, PhaseBlocked, err.Error())
@@ -1265,6 +1280,16 @@ func (s *Store) startSuccessor(ctx context.Context, op Operation, a Agent, lates
 		}
 		return s.publishAgentChanged(ctx, tx, a.Name, a.RootItemID)
 	})
+}
+
+// retireHandoffControl acks agentID's still-pending handoff control
+// messages: control is exempt from the delivery cap, so an unacked one would
+// otherwise reach every later session of the agent.
+func (s *Store) retireHandoffControl(ctx context.Context, agentID string) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE messages SET state = 'acked', acked_at = ?
+		WHERE to_agent_id = ? AND kind = 'control' AND state <> 'acked'
+		AND json_extract(payload_json, '$.action') = 'handoff'`, db.Millis(s.now()), agentID)
+	return err
 }
 
 // raisePreflightFailed notifies agent.preflight_failed for a background
