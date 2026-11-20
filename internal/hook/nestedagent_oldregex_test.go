@@ -72,6 +72,11 @@ func TestIsClaudeCommandKeepsWhatTheTextMatchBlocked(t *testing.T) {
 		"echo hi |& claude -p hi",
 		"echo hi\nclaude -p hi",
 		"echo 'a\nclaude -p hi\nb' | sh",
+		"echo 'a\nclaude -p hi\nb' > s.sh; bash s.sh",
+		"echo 'a\nclaude -p hi\nb' >> s.sh; . s.sh",
+		"echo 'a\nclaude -p hi\nb' | tee s.sh; source s.sh",
+		"echo 'a\nclaude -p hi\nb' > s.sh && chmod +x s.sh && ./s.sh",
+		"cat > s.sh <<EOF\na\nclaude -p hi\nEOF\nbash s.sh",
 	}
 	for _, cmd := range real {
 		if oldClaudeCmdRe.MatchString(cmd) && !isClaudeCommand(cmd) {

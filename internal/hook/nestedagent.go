@@ -23,13 +23,23 @@ import (
 // expansion produces (a variable's value, `cl*de`, `{claude,}`: an expansion
 // only counts as empty before a literal name), a name in another letter case
 // (`Claude`, which runs on a case-insensitive file system such as macOS), the
-// body of a heredoc to anything but a shell, and wrappers or builtins that run
-// a string it does not know. It does read the strings of sh -c, su -c, env -S,
-// eval and trap, and the text earlier stages of a pipeline print (a command's
-// arguments, `\n` read as a line break) when a later stage is a shell reading
-// stdin (no -c string and no script file, or -s): `echo claude | sh`. Text
-// that reaches a shell through anything but a pipe stage's arguments (a
-// `cat file | sh`, a `curl ... | sh`) is not known.
+// body of a heredoc to anything but a shell or a file run later in the line,
+// and wrappers or builtins that run a string it does not know. It does read
+// the strings of sh -c, su -c, env -S, eval and trap, and two forms of text
+// that is run without being a command-line word:
+//   - the text earlier stages of a pipeline print (a command's arguments, `\n`
+//     read as a line break) when a later stage is a shell reading stdin (no -c
+//     string and no script file, or -s): `echo claude | sh`;
+//   - the text a command writes to a file (> f, >> f, tee f, or a heredoc to
+//     them) when a later command in the same command line runs that file
+//     (sh f, . f, source f, ./f), matched by file name; a later write does
+//     not clear an earlier one, and a name built by an expansion is not matched.
+//
+// Not covered: a script written in one call and run in a later call (a hook
+// sees one command line at a time); text that reaches a shell from a file or
+// the network (`cat f | sh`, `curl ... | sh`); a file run inside an sh -c or
+// eval string, or by a wrapper the scanner does not follow, that an outer
+// command wrote.
 func isClaudeCommand(cmd string) bool {
 	return newShellScan(cmd, 0).blocked()
 }
@@ -50,6 +60,7 @@ const (
 	shellMarker = "\x00"
 	shellRedir  = "\x01"
 	shellHere   = "\x02" // a here-string (<<<); its word is code for a shell
+	shellOut    = "\x03" // an output redirection (>, >>): its next word is a file written
 )
 
 var shellNames = map[string]bool{
@@ -112,6 +123,12 @@ type shellScan struct {
 	// (stageText); stage is the text of the command just judged.
 	pipe  []string
 	stage string
+
+	// written maps a file name this command line writes (> f, >> f, tee f) to
+	// the text sent to it; running the file later reads that text as code.
+	// wrote is the files the command just judged writes.
+	written map[string][]string
+	wrote   []string
 }
 
 func newShellScan(s string, depth int) *shellScan {
@@ -145,6 +162,11 @@ func (p *shellScan) list(sub bool) bool {
 	end := func() bool {
 		flush()
 		hit := p.checkWords(words)
+		for i := range heredocs {
+			if !heredocs[i].owned {
+				heredocs[i].owned, heredocs[i].out = true, p.wrote
+			}
+		}
 		words = nil
 		return hit
 	}
@@ -234,6 +256,7 @@ func (p *shellScan) list(sub bool) bool {
 			}
 			for _, h := range heredocs {
 				body := p.heredocBody(h)
+				p.record(h.out, body)
 				if p.shellSeen && newShellScan(body, p.depth+1).blocked() {
 					return true
 				}
@@ -287,6 +310,7 @@ func (p *shellScan) list(sub bool) bool {
 				inWord = false
 			}
 			flush()
+			out := c == '>'
 			if c == '<' && p.peek(1) == '<' && p.peek(2) == '<' {
 				p.pos += 3
 				words = append(words, shellHere)
@@ -300,17 +324,25 @@ func (p *shellScan) list(sub bool) bool {
 				}
 				h := p.heredocStart()
 				h.tabs = tabs
+				// The delimiter is consumed here, so no marker: one would
+				// make checkWords skip the next word (`<<EOF > f`).
 				heredocs = append(heredocs, h)
-				words = append(words, shellRedir)
 				continue
 			}
 			for p.pos < len(p.s) && (p.s[p.pos] == '<' || p.s[p.pos] == '>') {
 				p.pos++
 			}
+			if p.peek(0) == '&' {
+				out = false // >&2 duplicates a descriptor
+			}
 			if p.peek(0) == '&' || p.peek(0) == '|' {
 				p.pos++
 			}
-			words = append(words, shellRedir)
+			if out {
+				words = append(words, shellOut)
+			} else {
+				words = append(words, shellRedir)
+			}
 		case c == ' ' || c == '\t' || c == '\r':
 			p.pos++
 			flush()
@@ -534,7 +566,9 @@ func (p *shellScan) ansiC() string {
 type heredoc struct {
 	delim  string
 	tabs   bool
-	quoted bool // any quoting in the delimiter turns off expansion in the body
+	quoted bool     // any quoting in the delimiter turns off expansion in the body
+	owned  bool     // the command it is stdin of has been judged
+	out    []string // files that command writes: the body goes to them
 }
 
 // heredocSubst scans a heredoc body (unquoted delimiter) for the command
@@ -609,13 +643,18 @@ func (p *shellScan) heredocBody(h heredoc) string {
 }
 
 // checkWords judges one simple command's decoded words.
-func (p *shellScan) checkWords(raw []string) bool {
+func (p *shellScan) checkWords(raw []string) (hit bool) {
 	words := make([]string, 0, len(raw))
-	var here []string
+	var here, out []string
 	for i := 0; i < len(raw); i++ {
 		switch raw[i] {
 		case shellRedir:
 			i++ // skip the redirect target
+		case shellOut:
+			if i+1 < len(raw) {
+				out = append(out, raw[i+1])
+			}
+			i++
 		case shellHere:
 			if i+1 < len(raw) {
 				here = append(here, raw[i+1])
@@ -626,6 +665,18 @@ func (p *shellScan) checkWords(raw []string) bool {
 		}
 	}
 	p.stage = stageText(words)
+	p.wrote = nil
+	defer func() {
+		if hit {
+			return
+		}
+		out = append(out, teeFiles(words)...)
+		p.wrote = out
+		// The text a command writes: its arguments, here-strings and what the
+		// pipeline fed it.
+		text := strings.Join(append(append([]string{p.stage}, here...), p.pipe...), "\n")
+		p.record(out, text)
+	}()
 	if len(here) == 0 {
 		return p.checkCommand(words)
 	}
@@ -688,6 +739,54 @@ func shellReadsStdin(args []string) bool {
 	return !positional
 }
 
+// record notes that text went to each of the files.
+func (p *shellScan) record(files []string, text string) {
+	for _, f := range files {
+		if strings.Contains(f, shellMarker) || f == "" {
+			continue
+		}
+		if p.written == nil {
+			p.written = map[string][]string{}
+		}
+		f = path.Clean(f)
+		p.written[f] = append(p.written[f], text)
+	}
+}
+
+// runsWritten judges a file the command line runs (sh f, . f, ./f): text an
+// earlier command wrote to it is code.
+func (p *shellScan) runsWritten(file string) bool {
+	if strings.Contains(file, shellMarker) {
+		return false
+	}
+	for _, text := range p.written[path.Clean(file)] {
+		if newShellScan(text, p.depth+1).blocked() {
+			return true
+		}
+	}
+	return false
+}
+
+// teeFiles returns the files `tee [options] FILE...` writes, or nil.
+func teeFiles(words []string) []string {
+	for i, w := range words {
+		if assignRe.MatchString(w) {
+			continue
+		}
+		if path.Base(w) != "tee" {
+			return nil
+		}
+		var files []string
+		for _, a := range words[i+1:] {
+			if !strings.HasPrefix(a, "-") {
+				files = append(files, a)
+			}
+		}
+		return files
+	}
+	return nil
+}
+
 func (p *shellScan) checkCommand(words []string) bool {
 	for i := 0; i < len(words); {
 		w := words[i]
@@ -716,6 +815,10 @@ func (p *shellScan) checkCommand(words []string) bool {
 		}
 		base := path.Base(w)
 		if base == "claude" {
+			return true
+		}
+		// ./script runs a file this line wrote.
+		if strings.Contains(w, "/") && p.runsWritten(w) {
 			return true
 		}
 		if opts, ok := wrapperArgOpts[base]; ok {
@@ -757,6 +860,14 @@ func (p *shellScan) checkCommand(words []string) bool {
 		if base == "eval" {
 			p.shellSeen = true
 			return newShellScan(strings.Join(words[i+1:], " "), p.depth+1).blocked()
+		}
+		if base == "source" || base == "." {
+			for _, a := range words[i+1:] {
+				if !strings.HasPrefix(a, "-") {
+					return p.runsWritten(a)
+				}
+			}
+			return false
 		}
 		if base == "trap" {
 			return p.checkTrap(words[i+1:])
@@ -900,7 +1011,7 @@ func (p *shellScan) checkShellArgs(args []string) bool {
 			if cflag && i+1 < len(args) {
 				return newShellScan(args[i+1], p.depth+1).blocked()
 			}
-			return false
+			return i+1 < len(args) && p.runsWritten(args[i+1])
 		case a == "-o" || a == "+o" || a == "-O" || a == "+O" || a == "--rcfile" || a == "--init-file":
 			i++
 		case strings.HasPrefix(a, "--"):
@@ -912,7 +1023,7 @@ func (p *shellScan) checkShellArgs(args []string) bool {
 			if cflag {
 				return newShellScan(a, p.depth+1).blocked()
 			}
-			return false
+			return p.runsWritten(a)
 		}
 	}
 	return false
