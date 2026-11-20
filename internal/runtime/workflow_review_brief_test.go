@@ -322,3 +322,45 @@ func TestLiveWorkflowAcceptedUpdateStillFitsTheReviewKickoff(t *testing.T) {
 		t.Fatalf("an accepted %d-char brief overflows a step kickoff", best)
 	}
 }
+
+// A task whose brief already sits over the cap (written before the cap, or
+// before the kickoff check) can still be retitled once it can never start
+// again; one that can still start keeps being measured, since a longer title
+// would push its kickoff over the cap.
+func TestRetitleOverCapTaskIsAllowedOnlyWhenItCanNoLongerStart(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		status  items.Status
+		allowed bool
+	}{
+		{items.Done, true},
+		{items.Cancelled, true},
+		{items.Ready, false},
+		{items.Draft, false},
+	} {
+		t.Run(string(tc.status), func(t *testing.T) {
+			s, _, _ := newStore(t)
+			_, taskKey := seedWorkflowTask(t, s, gatedBuildReviewSpec(t, 3))
+			if _, err := s.DB.ExecContext(ctx, `UPDATE items SET brief = ?, status = ? WHERE key = ?`,
+				strings.Repeat("x", items.MaxBrief+1), string(tc.status), taskKey); err != nil {
+				t.Fatal(err)
+			}
+			cur, err := s.Items.Get(ctx, taskKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			title := "A better title"
+			_, err = s.Items.Update(ctx, taskKey, items.Patch{Revision: cur.Revision, Title: &title}, items.User("board"))
+			if tc.allowed {
+				if err != nil {
+					t.Fatalf("retitle of a %s over-cap task refused: %v", tc.status, err)
+				}
+				return
+			}
+			var ie *items.Error
+			if !errors.As(err, &ie) || ie.Code != items.CodeBadRequest {
+				t.Fatalf("retitle of a %s task that can still start: err = %v, want bad_request", tc.status, err)
+			}
+		})
+	}
+}

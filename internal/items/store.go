@@ -784,7 +784,11 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, key string, p Patch, b
 				return Item{}, err
 			}
 		}
-		if s.CheckBriefs != nil && (p.Title != nil || p.Brief != nil || p.Acceptance != nil || p.Units != nil || p.Verify != nil || p.Steps != nil || p.Workflow != nil) {
+		// A title-only edit is measured only while the task can still start (the
+		// title sits in every kickoff header); a finished or cancelled task can
+		// still be retitled when its brief predates the cap.
+		titleMatters := p.Title != nil && it.Status != Done && it.Status != Cancelled
+		if s.CheckBriefs != nil && (titleMatters || p.Brief != nil || p.Acceptance != nil || p.Units != nil || p.Verify != nil || p.Steps != nil || p.Workflow != nil) {
 			if err := s.CheckBriefs(it); err != nil {
 				return Item{}, err
 			}
