@@ -33,11 +33,12 @@ type Runner struct {
 	Run          execx.Runner
 	Now          func() time.Time
 	Out          io.Writer
-	DoInstall    func(ctx context.Context) error  // step 9
-	Statfs       func(dir string) (uint64, error) // free bytes
-	FailAfter    int                              // test seam: ErrInjected after this step
-	ValidateHook func(ctx context.Context) error  // test seam for step 5
-	HoldTimeout  time.Duration                    // step 2's lsof wait; 20 s when zero
+	DoInstall    func(ctx context.Context) error            // step 9
+	Statfs       func(dir string) (uint64, error)           // free bytes
+	FailAfter    int                                        // test seam: ErrInjected after this step
+	ValidateHook func(ctx context.Context) error            // test seam for step 5
+	HoldTimeout  time.Duration                              // step 2's lsof wait; 20 s when zero
+	Sleep        func(context.Context, time.Duration) error // pause between rollback bootstrap retries; install.LaunchdSleep when nil
 }
 
 func (r *Runner) home() string     { return r.Cfg.Home }
