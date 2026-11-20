@@ -514,9 +514,20 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Worktree, error) 
 	if _, err := s.git(ctx, in.RepoPath, "fetch", "--quiet", "origin"); err != nil {
 		s.logf("worktree: fetch %s failed, using the local base: %v", in.RepoPath, err)
 	}
+	newBranch := !s.branchExists(ctx, in.RepoPath, in.Branch)
+	// A new branch needs a commit to start from. With none (an unborn default branch) git says only
+	// "invalid reference", so say what is wrong and how to fix it (BUG-179). ponytail: no orphan
+	// worktree: merge, review and the base sha all assume the base exists.
+	if newBranch {
+		if _, err := s.git(ctx, in.RepoPath, "rev-parse", "--verify", "--quiet", base+"^{commit}"); err != nil {
+			if _, herr := s.git(ctx, in.RepoPath, "rev-parse", "--verify", "--quiet", "HEAD"); herr != nil {
+				return Worktree{}, fmt.Errorf("worktree: %s has no commits, so there is nothing to branch a worktree from. "+
+					"Make the first commit there (for example `git -C %s commit --allow-empty -m \"Initial commit\"`) and try again", in.RepoPath, in.RepoPath)
+			}
+		}
+	}
 	path := PathFor(s.worktreesDir(), in.RepoPath, in.Branch, s.pathTaken(ctx))
 	args := []string{"worktree", "add"}
-	newBranch := !s.branchExists(ctx, in.RepoPath, in.Branch)
 	if newBranch {
 		args = append(args, "-b", in.Branch, path, base)
 	} else {
