@@ -842,6 +842,21 @@ func (s *Store) setStatus(ctx context.Context, tx *sql.Tx, it *Item, to Status) 
 	return nil
 }
 
+// ReopenDoneRootTx moves a Done top-level epic, bug or chore back to In progress because new work was
+// integrated after its finish (BUG-183). It does nothing for any other item, for a root another root
+// resolved, or for a root that isn't Done. Reconcile then opens the new finish request from the new
+// integrated checkpoint. Only runtime's integrated write calls it: reconcile never reopens a Done root.
+func (s *Store) ReopenDoneRootTx(ctx context.Context, tx *sql.Tx, key string) error {
+	it, err := s.getTx(ctx, tx, key)
+	if err != nil {
+		return err
+	}
+	if it.Status != Done || it.ID != it.RootID || !isAcceptRoot(it.Type) || it.ResolvedBy != "" {
+		return nil
+	}
+	return s.setStatus(ctx, tx, &it, InProgress)
+}
+
 // Reconcile recomputes daemon-owned state for key and every ancestor.
 func (s *Store) Reconcile(ctx context.Context, key string) error {
 	return s.write(ctx, func(tx *sql.Tx) error { return s.ReconcileTx(ctx, tx, key) })
