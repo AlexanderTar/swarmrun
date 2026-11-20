@@ -149,8 +149,21 @@ func (r *Runner) undo(ctx context.Context, a Action) error {
 			return nil
 		}
 		// The plist may be gone if step 3 never reached it; bootstrap would fail, and
-		// that is a reportable problem, not something to swallow.
-		if _, err := r.Run(ctx, "launchctl", a.Args...); err != nil && !install.NotLoaded(err) {
+		// that is a reportable problem, not something to swallow. A bootstrap right after a
+		// bootout can meet launchd's exit 5 "still unloading": wait and retry as the daemon
+		// restart does.
+		argv := append([]string{"launchctl"}, a.Args...)
+		var err error
+		if a.Args[0] == "bootstrap" {
+			sleep := r.Sleep
+			if sleep == nil {
+				sleep = install.LaunchdSleep
+			}
+			err = install.BootstrapWait(ctx, r.Run, sleep, argv)
+		} else {
+			_, err = r.Run(ctx, argv[0], argv[1:]...)
+		}
+		if err != nil && !install.NotLoaded(err) {
 			return err
 		}
 		return nil

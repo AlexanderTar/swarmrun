@@ -434,6 +434,9 @@ func (s *Store) RegisterArtifact(ctx context.Context, sessionID, op, itemKey, ki
 			} else {
 				warnings = lintWarnings
 			}
+			if err := checkTreeBriefs(t); err != nil {
+				return ArtifactResult{}, err
+			}
 			tree = &t
 		}
 	}

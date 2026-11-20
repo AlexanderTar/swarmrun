@@ -115,6 +115,39 @@ func TestCreateMakesAWorktreeUnderHomeAndRecordsTheBase(t *testing.T) {
 	}
 }
 
+// BUG-179: a repo with no commits has no base to branch from. Create refuses early, naming the repo and
+// the remedy, instead of surfacing git's "invalid reference: main"; it leaves no folder, branch or row.
+func TestCreateRefusesARepoWithNoCommitsAndSaysHowToFixIt(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	repo := filepath.Join(t.TempDir(), "empty")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(t, repo, "init", "-b", "main")
+	s, repoID := newService(t, repo)
+	_, err := s.Create(context.Background(), CreateInput{RepoID: repoID, RepoPath: repo,
+		Branch: "spike/spike-85-research", OwnerAgentID: "agt_1", RootItemID: "itm_1"})
+	if err == nil {
+		t.Fatal("a repo with no commits must be refused")
+	}
+	for _, want := range []string{"has no commits", repo, "commit --allow-empty"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to contain %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "invalid reference") {
+		t.Errorf("err leaks git's message: %q", err)
+	}
+	if out := run(t, repo, "branch", "--list"); strings.TrimSpace(out) != "" {
+		t.Errorf("a branch was left behind: %q", out)
+	}
+	var n int
+	if err := s.DB.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM worktrees`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("worktree rows = %d, %v", n, err)
+	}
+}
+
 func TestCreateSuffixesACollidingPath(t *testing.T) {
 	repo := gitRepo(t)
 	s, repoID := newService(t, repo)

@@ -74,6 +74,7 @@ func newMigrateEnv(t *testing.T) *migrateEnv {
 		Now:       func() time.Time { return time.Unix(1700000000, 0).UTC() },
 		Statfs:    func(string) (uint64, error) { return 100 << 30, nil }, // 100 GiB free
 		DoInstall: func(context.Context) error { env.Installed++; return nil },
+		Sleep:     func(context.Context, time.Duration) error { return nil }, // no test waits for launchd
 	}
 	return env
 }

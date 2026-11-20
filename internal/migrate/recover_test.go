@@ -668,6 +668,35 @@ func TestRollbackReportsARealLaunchctlFailure(t *testing.T) {
 	}
 }
 
+// Rollback's launchctl bootstrap meets the same exit 5 "still unloading" as the daemon restart does, and
+// must wait and retry the way install's Start does instead of reporting a problem.
+func TestRollbackRetriesABootstrapThatAnswersExitFive(t *testing.T) {
+	env := newMigrateEnv(t)
+	plist := filepath.Join(env.Cfg.LaunchAgentsDir, install.Label+".plist")
+	want := "launchctl bootstrap gui/501 " + plist
+	inner, tries := env.Runner.Run, 0
+	env.Runner.Run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if strings.Join(append([]string{name}, args...), " ") == want {
+			if tries++; tries <= 2 {
+				return nil, errors.New("launchctl: exit status 5: Bootstrap failed: 5: Input/output error")
+			}
+		}
+		return inner(ctx, name, args...)
+	}
+	j := &migrate.Journal{Version: 1, StartedAt: 1}
+	s := j.Begin(2, "stop the Swarm 1.x jobs")
+	s.Add(migrate.Action{Kind: "launchctl", Args: []string{"bootstrap", "gui/501", plist}})
+	if err := j.Save(env.Cfg.Home); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.Runner.Rollback(context.Background()); err != nil {
+		t.Fatalf("rollback gave up on a busy bootstrap: %v", err)
+	}
+	if tries != 3 {
+		t.Fatalf("bootstrap tried %d times, want 3 (two busy, then success)", tries)
+	}
+}
+
 // A second run of step 7 (e.g. via --resume after a later step crashed) must not
 // rewrite notes that are already correct on disk — only a genuine mismatch (a
 // truncated or missing file) should trigger a rewrite (Important 2's other half).

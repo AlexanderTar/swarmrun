@@ -229,3 +229,22 @@ func writePlist(t *testing.T, c Config) {
 		t.Fatal(err)
 	}
 }
+
+// Only launchd's exit 5 means "still unloading": exit 52 (or 15, 500) is a different failure and must
+// not be retried for 30 seconds.
+func TestBootstrapBusyMatchesExitCodeFiveExactly(t *testing.T) {
+	for _, tc := range []struct {
+		err  string
+		busy bool
+	}{
+		{"launchctl: exit status 5: Bootstrap failed: 5: Input/output error", true},
+		{"exit status 5", true},
+		{"launchctl: exit status 52: something else", false},
+		{"launchctl: exit status 15: something else", false},
+		{"launchctl: exit status 500", false},
+	} {
+		if got := bootstrapBusy(errors.New(tc.err)); got != tc.busy {
+			t.Errorf("bootstrapBusy(%q) = %v, want %v", tc.err, got, tc.busy)
+		}
+	}
+}

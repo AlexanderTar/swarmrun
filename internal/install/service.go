@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -97,15 +98,24 @@ func (s launchdService) Start(ctx context.Context, run execx.Runner, _ io.Writer
 			return err
 		}
 	}
+	return BootstrapWait(ctx, run, LaunchdSleep, bootstrap)
+}
+
+// LaunchdSleep is the pause BootstrapWait takes between tries; tests replace launchdSleep.
+func LaunchdSleep(ctx context.Context, d time.Duration) error { return launchdSleep(ctx, d) }
+
+// BootstrapWait runs a `launchctl bootstrap` argv, retrying for up to launchdBootstrapBound while launchd
+// answers exit 5 because the old job is still unloading. sleep pauses between tries.
+func BootstrapWait(ctx context.Context, run execx.Runner, sleep func(context.Context, time.Duration) error, argv []string) error {
 	for waited := time.Duration(0); ; waited += launchdPoll {
-		_, err := run(ctx, bootstrap[0], bootstrap[1:]...)
+		_, err := run(ctx, argv[0], argv[1:]...)
 		if err == nil {
 			return nil
 		}
 		if !bootstrapBusy(err) || waited >= launchdBootstrapBound {
 			return fmt.Errorf("launchctl bootstrap: %w", err)
 		}
-		if err := launchdSleep(ctx, launchdPoll); err != nil {
+		if err := sleep(ctx, launchdPoll); err != nil {
 			return err
 		}
 	}
@@ -128,6 +138,9 @@ func (s launchdService) waitUnloaded(ctx context.Context, run execx.Runner) erro
 	}
 }
 
+// exitFive matches the text of exit code 5 only: not 52, 500, or any other code that starts with 5.
+var exitFive = regexp.MustCompile(`exit status 5(\D|$)`)
+
 // bootstrapBusy reports whether a bootstrap error is launchd's exit 5
 // "Input/output error", which means the old job is still unloading.
 func bootstrapBusy(err error) bool {
@@ -136,7 +149,7 @@ func bootstrapBusy(err error) bool {
 		return true
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "exit status 5") || strings.Contains(msg, "input/output error")
+	return exitFive.MatchString(msg) || strings.Contains(msg, "input/output error")
 }
 
 func (s launchdService) Stop(ctx context.Context, run execx.Runner) error {

@@ -53,6 +53,11 @@ type Store struct {
 	// text; the hook refuses the update if the item has a live workflow and any
 	// of its steps' kickoffs would no longer fit. nil allows every update.
 	CheckWorkflowBriefs func(ctx context.Context, tx *sql.Tx, it Item) error
+	// CheckBriefs fires when an item with a workflow is created, or a patch changes what its step
+	// kickoffs render. it carries the new text; the hook refuses it if a step's kickoff could never
+	// fit the brief cap, so the refusal comes when the text is written, not at workflow start. nil
+	// allows everything.
+	CheckBriefs func(it Item) error
 }
 
 type CreateInput struct {
@@ -547,6 +552,12 @@ func (s *Store) CreateTx(ctx context.Context, tx *sql.Tx, in CreateInput, by Act
 	if err != nil {
 		return Item{}, err
 	}
+	if s.CheckBriefs != nil && in.Workflow != nil {
+		if err := s.CheckBriefs(Item{Key: key, Type: in.Type, Title: in.Title, Brief: in.Brief, Acceptance: in.Acceptance,
+			Steps: in.Steps, Units: in.Units, Verify: in.Verify, Workflow: in.Workflow}); err != nil {
+			return Item{}, err
+		}
+	}
 	confirmed, hints, reposVersion := "[]", jsonList(in.Repos), 0
 	if !parentID.Valid {
 		confirmed, hints = jsonList(in.Repos), "[]"
@@ -770,6 +781,11 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, key string, p Patch, b
 		}
 		if s.CheckWorkflowBriefs != nil && (p.Brief != nil || p.Acceptance != nil || p.Units != nil || p.Verify != nil || p.Steps != nil) {
 			if err := s.CheckWorkflowBriefs(ctx, tx, it); err != nil {
+				return Item{}, err
+			}
+		}
+		if s.CheckBriefs != nil && (p.Title != nil || p.Brief != nil || p.Acceptance != nil || p.Units != nil || p.Verify != nil || p.Steps != nil || p.Workflow != nil) {
+			if err := s.CheckBriefs(it); err != nil {
 				return Item{}, err
 			}
 		}

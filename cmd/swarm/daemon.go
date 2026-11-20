@@ -303,6 +303,7 @@ func openDaemon(ctx context.Context, cfg daemonConfig) (*daemon, error) {
 	it.StoryReadyForReview = rt.OnStoryReadyForReview   // relay story_ready_for_review when all tasks finish
 	it.RootDone = rt.OnRootDone                         // finish every agent on a root that just reached Done
 	it.CheckWorkflowBriefs = rt.CheckLiveWorkflowBriefs // refuse a brief update that would overflow a live workflow's later step kickoff
+	it.CheckBriefs = runtime.CheckItemBriefs            // refuse a task whose step kickoff can never fit the brief cap when it is written
 	it.CheckLanded = rt.CheckLanded                     // refuse a resolved-by close whose integrated sha never reached the default branch
 	// Safety invariant S-4: SourcesFromEnv returns nil unless SWARM_USAGE=live,
 	// which only the installed launchd plist or systemd unit sets. Every other

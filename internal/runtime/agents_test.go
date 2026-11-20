@@ -218,6 +218,7 @@ func newStore(t *testing.T) (*Store, *fakeTmux, *adapter.Fake) {
 	}
 	it.StoryReadyForReview = s.OnStoryReadyForReview
 	it.CheckWorkflowBriefs = s.CheckLiveWorkflowBriefs
+	it.CheckBriefs = CheckItemBriefs
 	return s, tm, fa
 }
 
