@@ -555,3 +555,62 @@ func TestIsClaudeCommandAllowsTextNotPipedToShell(t *testing.T) {
 		}
 	}
 }
+
+// A lone - makes a shell read its script from stdin, so piped text is code.
+func TestIsClaudeCommandBlocksTextPipedToShellDash(t *testing.T) {
+	for _, s := range []string{
+		"echo claude | sh -",
+		"echo claude | bash -x -",
+		"echo claude | sh -s -",
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (script piped to a stdin shell)", s)
+		}
+	}
+	for _, s := range []string{
+		"echo claude | sh script.sh -",
+		"echo claude | sh -c 'cat' -",
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (script file or -c string)", s)
+		}
+	}
+}
+
+// A shell fed a written file on stdin, a heredoc body run by a command that
+// precedes the newline, and &> output all read the text as code.
+func TestIsClaudeCommandBlocksWrittenScriptRunForms(t *testing.T) {
+	for _, s := range []string{
+		"echo claude > s.sh; sh < s.sh",
+		"echo claude > s.sh; bash -s < s.sh",
+		"echo claude > s.sh; sh < ./s.sh",
+		"echo claude &> s.sh; sh s.sh",
+		"echo claude &>> s.sh; sh s.sh",
+		"cat <<EOF > s.sh && chmod +x s.sh && ./s.sh\nclaude -p hi\nEOF",
+		"cat <<EOF > s.sh; . s.sh\nclaude -p hi\nEOF",
+		"cat <<EOF > s.sh; source s.sh\nclaude -p hi\nEOF",
+		"cat <<EOF > s.sh; ./s.sh\nclaude -p hi\nEOF",
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (script written then run)", s)
+		}
+	}
+}
+
+// The data twins of the forms above stay allowed.
+func TestIsClaudeCommandAllowsWrittenScriptRunData(t *testing.T) {
+	for _, s := range []string{
+		"echo claude > s.sh; sh < other.sh",
+		"sh < s.sh; echo claude > s.sh",
+		"echo claude > s.sh; cat < s.sh",
+		"echo hi &> out.log; cat out.log",
+		"echo 'see claude -p docs' &> notes.md; sh notes.md",
+		"cat <<EOF > notes.md; sh notes.md\nthe claude CLI\nEOF",
+		"cat <<EOF > notes.md; . other.sh\nclaude -p hi\nEOF",
+		"sleep 1 & echo claude",
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (data)", s)
+		}
+	}
+}
