@@ -736,8 +736,11 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, key string, p Patch, b
 		if p.Verify != nil {
 			it.Verify = *p.Verify
 		}
-		// Only a brief this patch writes is measured: an item whose brief
-		// predates the cap can still be retitled or re-prioritised.
+		// ValidateBrief measures only a brief this patch writes. The assembled
+		// kickoff check further down (CheckBriefs) also runs on a title edit
+		// while the task can still start, so an over-cap task can be
+		// re-prioritised at any time but retitled only once Done or Cancelled
+		// (or when it has no workflow, which CheckBriefs does not measure).
 		if err := ValidateTitle(it.Title); err != nil {
 			return Item{}, err
 		}
