@@ -891,7 +891,8 @@ func (s *Store) CheckLanded(ctx context.Context, tx *sql.Tx, root items.Item, gi
 // integratesNewWork reports whether an integrated checkpoint written on a Done root carries work the
 // root's last finish didn't: its repo/sha set differs from the newest earlier integrated checkpoint
 // that was finished (or, when none was, the newest earlier one). Work with no git has no sha to
-// compare, so it counts only when a task was added under the root after the newest earlier integrated.
+// compare, so it counts only when a task past draft was added under the root after the newest earlier integrated
+// (a follow-up that was only created doesn't count).
 func (s *Store) integratesNewWork(ctx context.Context, tx *sql.Tx, itemID, newCkpID string, git []GitRef) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, git_json, created_at FROM checkpoints WHERE item_id = ? AND kind = 'integrated' AND id <> ?
 		ORDER BY created_at DESC, rowid DESC`, itemID, newCkpID)
@@ -918,7 +919,7 @@ func (s *Store) integratesNewWork(ctx context.Context, tx *sql.Tx, itemID, newCk
 	if len(git) == 0 {
 		var n int
 		err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE root_id = ? AND id <> ? AND created_at > ?
-			AND archived_at IS NULL AND status <> 'cancelled'`,
+			AND archived_at IS NULL AND status NOT IN ('cancelled', 'draft')`,
 			itemID, itemID, priors[0].at).Scan(&n)
 		return n > 0, err
 	}

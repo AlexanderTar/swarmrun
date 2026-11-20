@@ -249,6 +249,29 @@ func TestGitlessIntegratedIgnoresCancelledAndArchivedChildren(t *testing.T) {
 	}
 }
 
+// A follow-up that was only created (still a draft, never started) is no new work for a no-repo integrated.
+func TestGitlessIntegratedIgnoresDraftChildren(t *testing.T) {
+	s, ses, key := customFinishFixture(t)
+	finishKept(t, s, ses)
+	child, err := s.Items.Create(context.Background(), items.CreateInput{Type: items.Task, ParentKey: key, Title: "Only created"}, items.User("board"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if child.Status != items.Draft {
+		t.Fatalf("setup: follow-up status = %s, want draft", child.Status)
+	}
+	if st := itemStatus(t, s, key); st != items.Done {
+		t.Fatalf("setup: creating a draft follow-up moved the root to %s, want done", st)
+	}
+	if _, err := s.WriteCheckpoint(context.Background(), ses, CheckpointInput{Kind: Integrated, Summary: "again",
+		FinishOptions: []FinishOption{{Label: "Accept as done"}}, Verification: []Verify{{Cmd: "true", Phase: "green", OK: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	if st := itemStatus(t, s, key); st != items.Done {
+		t.Fatalf("git-less integrated after only a draft task: status = %s, want done", st)
+	}
+}
+
 // A Done root another root resolved stays Done when a task is added under it.
 func TestFollowUpTaskKeepsResolvedRootDone(t *testing.T) {
 	s, _, key := customFinishFixture(t)
