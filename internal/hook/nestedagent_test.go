@@ -42,6 +42,7 @@ EOF`,
 docs: don't start claude -p from a hook (it's (not) allowed
 EOF
 )"`,
+		"cat <<EOF\n\tEOF\nclaude\nEOF",
 		`for f in claude codex; do echo $f; done`,
 		`# claude -p in a comment`,
 		`echo ok # claude`,
@@ -100,6 +101,7 @@ func TestIsClaudeCommandBlocksRealInvocations(t *testing.T) {
 		"cat <<EOF | bash\nclaude -p x\nEOF",
 		"bash <<EOF\nclaude -p x\nEOF",
 		"sh <<'EOF'\nls\nclaude\nEOF",
+		"bash <<-EOF\n\tclaude -p x\n\tEOF\nls",
 		"claude 2>&1",
 		"claude >out.txt",
 		"claude <in.txt",

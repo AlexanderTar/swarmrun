@@ -232,10 +232,13 @@ func (p *shellScan) list(sub bool) bool {
 			flush()
 			if c == '<' && p.peek(1) == '<' && p.peek(2) != '<' {
 				p.pos += 2
-				if p.peek(0) == '-' {
+				tabs := p.peek(0) == '-'
+				if tabs {
 					p.pos++
 				}
-				heredocs = append(heredocs, p.heredocStart())
+				h := p.heredocStart()
+				h.tabs = tabs
+				heredocs = append(heredocs, h)
 				words = append(words, shellRedir)
 				continue
 			}
@@ -418,7 +421,10 @@ func (p *shellScan) heredocBody(h heredoc) string {
 			line = p.s[p.pos : p.pos+nl]
 			next = p.pos + nl + 1
 		}
-		if strings.TrimLeft(line, "\t") == h.delim {
+		if h.tabs {
+			line = strings.TrimLeft(line, "\t")
+		}
+		if line == h.delim {
 			body := p.s[start:p.pos]
 			p.pos = next
 			return body
