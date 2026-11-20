@@ -47,11 +47,29 @@ var reservedWords = map[string]bool{
 	"elif": true, "do": true, "while": true, "until": true,
 }
 
-// wrapperArgOpts lists, per wrapper, the options that take a separate
-// argument word, so `sudo -u root claude` finds claude after `root`.
+// wrapperArgOpts lists, per wrapper that runs the rest of its arguments as a
+// command, the options that take a separate argument word, so
+// `sudo -u root claude` finds claude after `root`. A wrapper never launders
+// the agent: whatever follows its options is judged as a command.
 var wrapperArgOpts = map[string]map[string]bool{
-	"exec":  {"-a": true},
-	"nohup": {},
+	"exec":       {"-a": true},
+	"nohup":      {},
+	"builtin":    {},
+	"command":    {},
+	"setsid":     {},
+	"time":       {"-f": true, "-o": true, "--format": true, "--output": true},
+	"nice":       {"-n": true, "--adjustment": true},
+	"ionice":     {"-c": true, "-n": true, "-p": true, "-P": true, "-u": true},
+	"stdbuf":     {"-i": true, "-o": true, "-e": true},
+	"caffeinate": {"-t": true, "-w": true},
+	"doas":       {"-u": true, "-C": true},
+	"timeout":    {"-s": true, "-k": true, "--signal": true, "--kill-after": true},
+	"xargs": {
+		"-a": true, "-d": true, "-E": true, "-I": true, "-L": true, "-n": true,
+		"-P": true, "-s": true, "--arg-file": true, "--delimiter": true,
+		"--max-args": true, "--max-procs": true, "--max-lines": true,
+		"--max-chars": true,
+	},
 	"sudo": {
 		"-u": true, "-g": true, "-h": true, "-p": true, "-C": true, "-D": true,
 		"-R": true, "-r": true, "-t": true, "-T": true, "-U": true,
@@ -63,6 +81,10 @@ var wrapperArgOpts = map[string]map[string]bool{
 		"-u": true, "-C": true, "--unset": true, "--chdir": true,
 	},
 }
+
+// wrapperPositionals counts the plain arguments a wrapper takes before the
+// command (timeout DURATION command).
+var wrapperPositionals = map[string]int{"timeout": 1}
 
 type shellScan struct {
 	s         string
@@ -431,8 +453,25 @@ func (p *shellScan) checkCommand(words []string) bool {
 			return true
 		}
 		if opts, ok := wrapperArgOpts[base]; ok {
+			if base == "command" && hasLookupFlag(words[i+1:]) {
+				return false // command -v/-V only looks the name up
+			}
+			if base == "env" {
+				if script, ok := envSplitString(words[i+1:]); ok {
+					return newShellScan(script, p.depth+1).blocked()
+				}
+			}
 			i = skipWrapperOptions(words, i+1, opts, base == "env")
+			for n := wrapperPositionals[base]; n > 0 && i < len(words); n-- {
+				i++
+			}
 			continue
+		}
+		if base == "find" {
+			return p.checkFindExec(words[i+1:])
+		}
+		if base == "su" {
+			return p.checkSuCommand(words[i+1:])
 		}
 		if shellNames[base] {
 			p.shellSeen = true
@@ -443,6 +482,72 @@ func (p *shellScan) checkCommand(words []string) bool {
 			return newShellScan(strings.Join(words[i+1:], " "), p.depth+1).blocked()
 		}
 		return false
+	}
+	return false
+}
+
+// hasLookupFlag reports a leading -v or -V of `command`, which prints where a
+// name resolves instead of running it.
+func hasLookupFlag(args []string) bool {
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			return false
+		}
+		if a == "-v" || a == "-V" {
+			return true
+		}
+	}
+	return false
+}
+
+// envSplitString finds the string given to env -S / --split-string, which env
+// splits into a command line and runs.
+func envSplitString(args []string) (string, bool) {
+	for i, a := range args {
+		switch {
+		case a == "-S" || a == "--split-string":
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+		case strings.HasPrefix(a, "--split-string="):
+			return strings.TrimPrefix(a, "--split-string="), true
+		case strings.HasPrefix(a, "-S"):
+			return a[2:], true
+		case !strings.HasPrefix(a, "-") && !assignRe.MatchString(a):
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// checkFindExec judges the command run by find -exec/-execdir/-ok/-okdir,
+// which ends at a lone ; or +. Other find arguments are data.
+func (p *shellScan) checkFindExec(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-exec", "-execdir", "-ok", "-okdir":
+			j := i + 1
+			for j < len(args) && args[j] != ";" && args[j] != "+" {
+				j++
+			}
+			if p.checkCommand(args[i+1 : j]) {
+				return true
+			}
+			i = j
+		}
+	}
+	return false
+}
+
+// checkSuCommand judges the string given to su -c / --command.
+func (p *shellScan) checkSuCommand(args []string) bool {
+	for i, a := range args {
+		switch {
+		case (a == "-c" || a == "--command") && i+1 < len(args):
+			return newShellScan(args[i+1], p.depth+1).blocked()
+		case strings.HasPrefix(a, "--command="):
+			return newShellScan(strings.TrimPrefix(a, "--command="), p.depth+1).blocked()
+		}
 	}
 	return false
 }

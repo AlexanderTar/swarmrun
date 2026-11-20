@@ -184,3 +184,79 @@ func TestIsClaudeCommandBlocksQuotedCommandWord(t *testing.T) {
 		}
 	}
 }
+
+// Wrappers that run their argument as a command. Decision: a wrapper never
+// launders the agent, so each of these is blocked, including xargs and
+// find -exec, which start it with arguments read from elsewhere.
+func TestIsClaudeCommandBlocksWrapperForms(t *testing.T) {
+	for _, s := range []string{
+		"xargs claude",
+		"echo hi | xargs claude -p",
+		"xargs -n1 -I{} claude -p {}",
+		"xargs -0 -r env X=1 claude",
+		"xargs sh -c 'claude -p x'",
+		"find . -exec claude {} ;",
+		`find . -name '*.md' -exec claude -p {} \;`,
+		`find . -execdir claude {} +`,
+		`find . -ok claude {} \;`,
+		`find . -type f -exec sh -c 'claude -p x' _ {} \;`,
+		"timeout 5 claude",
+		"timeout -s KILL 5 claude -p x",
+		"timeout --signal=KILL 5s claude",
+		"timeout --kill-after 1 5 claude",
+		"command claude",
+		"command -p claude",
+		"builtin claude",
+		"nice claude",
+		"nice -n 10 claude",
+		"ionice -c 3 claude",
+		"time claude",
+		"time -p claude",
+		"stdbuf -oL claude",
+		"stdbuf -o L claude",
+		"setsid claude",
+		"setsid -f claude",
+		"doas claude",
+		"doas -u root claude",
+		"caffeinate -i claude",
+		"env -S 'claude -p x'",
+		"env -S'X=1 claude'",
+		"env --split-string='claude'",
+		"su -c 'claude -p x'",
+		"su root -c claude",
+		"sudo -u root timeout 5 xargs nice claude",
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (wrapper form)", s)
+		}
+	}
+}
+
+// The same wrappers around an ordinary command, and read-only lookups of the
+// agent's name, are not invocations.
+func TestIsClaudeCommandAllowsWrapperData(t *testing.T) {
+	for _, s := range []string{
+		"xargs grep claude",
+		"xargs -n1 echo claude",
+		"find . -name claude",
+		"find . -name 'claude*' -type f",
+		`find . -exec grep -l claude {} \;`,
+		`find . -exec ls claude {} +`,
+		"timeout 5 grep claude file",
+		"timeout 5 ls",
+		"command -v claude",
+		"command -V claude",
+		"nice -n 10 ls claude",
+		"time ls claude",
+		"env X=claude ls",
+		"env -u claude ls",
+		"sudo -u claude ls",
+		"stdbuf -oL cat claude.txt",
+		"su -c 'echo claude'",
+		"doas ls claude",
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (data/lookup)", s)
+		}
+	}
+}
