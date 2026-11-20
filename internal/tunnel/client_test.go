@@ -274,13 +274,22 @@ func TestClientResetsBackoffAfterAStableSession(t *testing.T) {
 	go func() { c.Run(ctx); close(done) }()
 
 	// call 3 drops after 61 s up (stable), call 4 drops at once (flapping)
-	eventually(t, "session 1", func() bool { mu.Lock(); defer mu.Unlock(); return len(ends) == 1 })
+	// ends is appended by the dial callback on the client goroutine: every read takes mu.
+	end := func(i int) net.Conn {
+		mu.Lock()
+		defer mu.Unlock()
+		if i < len(ends) {
+			return ends[i]
+		}
+		return nil
+	}
+	eventually(t, "session 1", func() bool { return end(0) != nil })
 	eventually(t, "connected", func() bool { return c.Status().State == "connected" })
 	clk.advance(61 * time.Second)
-	ends[0].Close()
-	eventually(t, "session 2", func() bool { mu.Lock(); defer mu.Unlock(); return len(ends) == 2 })
+	end(0).Close()
+	eventually(t, "session 2", func() bool { return end(1) != nil })
 	eventually(t, "connected again", func() bool { return c.Status().State == "connected" })
-	ends[1].Close()
+	end(1).Close()
 	<-done
 	// 1s, 2s (two failures), then after the stable session 1s again, then 2s for the flap
 	want := secs(1, 2, 1, 2)

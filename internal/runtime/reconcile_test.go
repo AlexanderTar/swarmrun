@@ -256,7 +256,11 @@ func TestReconcileLoopMeasuresThePeriodFromTheTickStart(t *testing.T) {
 	}
 	waits := make(chan time.Duration, 8)
 	s.After = func(d time.Duration) <-chan time.Time {
-		waits <- d
+		// Never block: the loop may run a few more ticks after cancel, and a full channel must not park it.
+		select {
+		case waits <- d:
+		default:
+		}
 		tick := make(chan time.Time, 1)
 		tick <- time.Now()
 		return tick
