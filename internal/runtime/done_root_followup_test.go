@@ -200,6 +200,34 @@ func TestStartedThenCancelledFollowUpKeepsUsedApproval(t *testing.T) {
 	}
 }
 
+// A no-repo integrated re-recorded on a Done root (a resume, say) is no new work unless a task was added
+// since the last integrated.
+func TestGitlessIntegratedNeedsNewerChildToReopen(t *testing.T) {
+	s, ses, key := customFinishFixture(t)
+	finishKept(t, s, ses)
+	opts := []FinishOption{{Label: "Accept as done"}}
+	write := func() {
+		t.Helper()
+		if _, err := s.WriteCheckpoint(context.Background(), ses, CheckpointInput{Kind: Integrated, Summary: "again",
+			FinishOptions: opts, Verification: []Verify{{Cmd: "true", Phase: "green", OK: true}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	if st := itemStatus(t, s, key); st != items.Done {
+		t.Fatalf("git-less integrated with no new task: status = %s, want done", st)
+	}
+	child, err := s.Items.Create(context.Background(), items.CreateInput{Type: items.Task, ParentKey: key, Title: "Correction"}, items.User("board"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, s.DB, `UPDATE items SET status = 'done', updated_at = ? WHERE id = ?`, db.Millis(s.Now()), child.ID)
+	write()
+	if st := itemStatus(t, s, key); st != items.InReview {
+		t.Fatalf("git-less integrated after a new task: status = %s, want in_review", st)
+	}
+}
+
 // A Done root another root resolved stays Done when a task is added under it.
 func TestFollowUpTaskKeepsResolvedRootDone(t *testing.T) {
 	s, _, key := customFinishFixture(t)
