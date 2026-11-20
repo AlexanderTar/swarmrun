@@ -583,6 +583,141 @@ func (s *Store) carriedEvidence(ctx context.Context, tx *sql.Tx, itemID, current
 	return out, rows.Err()
 }
 
+// earlierProof is one unit's red-before-green evidence from an agent that
+// ran the same step earlier in this workflow: when its green was recorded
+// and when that agent's activity ended (both unix milliseconds).
+type earlierProof struct{ greenMs, endMs int64 }
+
+// carryFromEarlierAgents drops from left the units an earlier agent of this
+// step (a predecessor cancelled, crashed or replaced in the same workflow)
+// already proved, BUG-180. A unit carries only when this round's evidence
+// (entries) does not mention it -- touching it again needs its own red then
+// green -- and the new checkpoint's sha has a commit in its history made
+// after that agent's green and before its activity ended, so the work it
+// proved is in what is being completed.
+// ponytail: unit-to-commit is matched by commit time inside the agent's
+// window, not by commit content; two agents overlapping in time could
+// vouch for each other's commits. Upgrade: record the worktree HEAD on every
+// unit-tagged checkpoint and compare ancestry instead.
+func (s *Store) carryFromEarlierAgents(ctx context.Context, tx *sql.Tx, run workflowRun, a Agent, in CheckpointInput, entries []Verify, left []int) ([]int, error) {
+	if len(left) == 0 || len(in.Git) == 0 {
+		return left, nil
+	}
+	wts, err := s.rwWorktreesFor(ctx, tx, a.ID)
+	if err != nil || len(wts) == 0 {
+		return left, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT agent_id FROM workflow_runs
+		WHERE workflow_id = ? AND step_id = ? AND agent_id IS NOT NULL AND agent_id != ?`,
+		run.WorkflowID, run.StepID, a.ID)
+	if err != nil {
+		return nil, err
+	}
+	var earlier []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		earlier = append(earlier, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var out []int
+	for _, u := range left {
+		if slices.ContainsFunc(entries, func(v Verify) bool { return v.Unit == u }) {
+			out = append(out, u)
+			continue
+		}
+		carried := false
+		for _, id := range earlier {
+			p, ok, err := s.earlierAgentProof(ctx, tx, id, u)
+			if err != nil {
+				return nil, err
+			}
+			if ok && s.commitInWindow(ctx, wts, in.Git, p) {
+				carried = true
+				break
+			}
+		}
+		if !carried {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
+
+// earlierAgentProof finds unit's first red-then-green on agentID's
+// checkpoints and the end of that agent's activity.
+func (s *Store) earlierAgentProof(ctx context.Context, tx *sql.Tx, agentID string, unit int) (earlierProof, bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT created_at, verify_json FROM checkpoints
+		WHERE agent_id = ? ORDER BY created_at, rowid`, agentID)
+	if err != nil {
+		return earlierProof{}, false, err
+	}
+	defer rows.Close()
+	var p earlierProof
+	var found, red bool
+	for rows.Next() {
+		var at int64
+		var raw string
+		if err := rows.Scan(&at, &raw); err != nil {
+			return earlierProof{}, false, err
+		}
+		p.endMs = max(p.endMs, at)
+		var vs []Verify
+		if err := json.Unmarshal([]byte(raw), &vs); err != nil {
+			return earlierProof{}, false, fmt.Errorf("checkpoints verify_json: %w", err)
+		}
+		for _, v := range vs {
+			if found || v.Unit != unit {
+				continue
+			}
+			switch {
+			case v.Phase == "red" && !v.OK:
+				red = true
+			case v.Phase == "green" && v.OK && red:
+				found, p.greenMs = true, at
+			}
+		}
+	}
+	if err := rows.Err(); err != nil || !found {
+		return earlierProof{}, false, err
+	}
+	var endedMs sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT MAX(ended_at) FROM sessions WHERE agent_id = ?`, agentID).Scan(&endedMs); err != nil {
+		return earlierProof{}, false, err
+	}
+	p.endMs = max(p.endMs, endedMs.Int64)
+	return p, true, nil
+}
+
+// commitInWindow reports whether any declared sha, in any of the agent's rw
+// worktrees' repositories, has a commit made inside p's window in its history.
+func (s *Store) commitInWindow(ctx context.Context, wts []rwWorktree, refs []GitRef, p earlierProof) bool {
+	runner := s.Exec
+	if runner == nil {
+		runner = execx.Run
+	}
+	since, until := fmt.Sprintf("--since=@%d", p.greenMs/1000), fmt.Sprintf("--until=@%d", p.endMs/1000+1)
+	for _, w := range wts {
+		for _, g := range refs {
+			if strings.HasPrefix(g.SHA, "-") {
+				continue // never let a declared sha pose as a git option
+			}
+			out, err := runner(ctx, "git", "-C", w.Path, "log", "-n1", "--format=%H", since, until, g.SHA)
+			if err == nil && strings.TrimSpace(string(out)) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // findFixStepsFor returns every review step in spec whose loop retries
 // buildStepID (`Loop.Fix`, falling back to `Of` when `Loop.Fix` is unset --
 // spec B5, fix round 1's R3), or nil if none targets it at all (a step with
@@ -761,7 +896,7 @@ func (s *Store) tddGate(ctx context.Context, tx *sql.Tx, it items.Item, run work
 				left = append(left, u)
 			}
 		}
-		return left, nil
+		return s.carryFromEarlierAgents(ctx, tx, run, a, in, entries, left)
 	}
 
 	var required []int
