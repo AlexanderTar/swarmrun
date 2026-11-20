@@ -576,6 +576,14 @@ func (s *Store) CreateTx(ctx context.Context, tx *sql.Tx, in CreateInput, by Act
 		return Item{}, err
 	}
 	if parentID.Valid {
+		// BUG-183: follow-up work under a Done root is work in flight.
+		root, err := s.getByID(ctx, tx, rootID)
+		if err != nil {
+			return Item{}, err
+		}
+		if err := s.reopenDoneRoot(ctx, tx, root); err != nil {
+			return Item{}, err
+		}
 		if err := s.ReconcileTx(ctx, tx, in.ParentKey); err != nil {
 			return Item{}, err
 		}

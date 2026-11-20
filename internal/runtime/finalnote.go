@@ -48,6 +48,15 @@ func (s *Store) nudgeFinalNote(ctx context.Context, r liveRow, idle bool) error 
 	if rootStatus != string(items.Done) {
 		return nil
 	}
+	// BUG-183: a follow-up task still in flight under the Done root is post-merge work, not a missing note.
+	var live int
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE root_id = ? AND id <> ? AND archived_at IS NULL
+		AND status NOT IN ('draft', 'done', 'cancelled')`, r.RootItemID, r.RootItemID).Scan(&live); err != nil {
+		return err
+	}
+	if live > 0 {
+		return nil
+	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT state, created_at FROM messages WHERE to_agent_id = ? AND kind = 'assignment_update'
 		AND origin = 'daemon' AND payload_json LIKE '%"event":"final_note_nudge"%'`, r.AgentID)
 	if err != nil {
