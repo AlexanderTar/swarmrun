@@ -2250,6 +2250,20 @@ func (s *Store) WriteCheckpoint(ctx context.Context, sessionID string, in Checkp
 					return err
 				}
 			}
+			// BUG-183: new work integrated after the root's finish reopens it so
+			// reconcile opens a fresh finish request. Reconcile alone never
+			// reopens a Done root, so rows an older binary wrote stay Done.
+			if it.Status == items.Done {
+				fresh, err := s.integratesNewWork(ctx, tx, it.ID, out.CheckpointID, in.Git)
+				if err != nil {
+					return err
+				}
+				if fresh {
+					if err := s.Items.ReopenDoneRootTx(ctx, tx, itemKey); err != nil {
+						return err
+					}
+				}
+			}
 		case CompletedCkp:
 			if it.Status == items.Blocked && a.Role != RoleOrchestrator {
 				// Only undo a block this agent's own blocked checkpoint caused.

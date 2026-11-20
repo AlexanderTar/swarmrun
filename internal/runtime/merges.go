@@ -887,3 +887,61 @@ func (s *Store) CheckLanded(ctx context.Context, tx *sql.Tx, root items.Item, gi
 	}
 	return nil
 }
+
+// integratesNewWork reports whether an integrated checkpoint written on a Done root carries work the
+// root's last finish didn't: its repo/sha set differs from the newest earlier integrated checkpoint
+// that was finished (or, when none was, the newest earlier one). Work with no git has no sha to
+// compare, so it counts only when a task was added under the root after the newest earlier integrated.
+func (s *Store) integratesNewWork(ctx context.Context, tx *sql.Tx, itemID, newCkpID string, git []GitRef) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, git_json, created_at FROM checkpoints WHERE item_id = ? AND kind = 'integrated' AND id <> ?
+		ORDER BY created_at DESC, rowid DESC`, itemID, newCkpID)
+	if err != nil {
+		return false, err
+	}
+	type prior struct {
+		id, git string
+		at      int64
+	}
+	var priors []prior
+	for rows.Next() {
+		var p prior
+		if err := rows.Scan(&p.id, &p.git, &p.at); err != nil {
+			rows.Close()
+			return false, err
+		}
+		priors = append(priors, p)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(priors) == 0 {
+		return false, err
+	}
+	if len(git) == 0 {
+		var n int
+		err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE root_id = ? AND id <> ? AND created_at > ?
+			AND archived_at IS NULL AND status <> 'cancelled'`,
+			itemID, itemID, priors[0].at).Scan(&n)
+		return n > 0, err
+	}
+	base := priors[0]
+	for _, p := range priors {
+		done, err := s.finishRecordedTx(ctx, tx, itemID, p.id)
+		if err != nil {
+			return false, err
+		}
+		if done {
+			base = p
+			break
+		}
+	}
+	var old []GitRef
+	if err := json.Unmarshal([]byte(base.git), &old); err != nil || len(old) != len(git) {
+		return true, nil
+	}
+	for _, g := range git {
+		i := slices.IndexFunc(old, func(o GitRef) bool { return o.Repo == g.Repo })
+		if i < 0 || !shaMatches(old[i].SHA, g.SHA) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
