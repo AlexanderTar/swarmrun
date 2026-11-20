@@ -2,9 +2,11 @@ package install
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -59,20 +61,82 @@ func (s launchdService) Commands() [][]string {
 	}
 }
 
+// launchdSleep pauses between launchctl polls; tests replace it so no test waits.
+var launchdSleep = func(ctx context.Context, d time.Duration) error {
+	select {
+	case <-time.After(d):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+const (
+	launchdPoll = 250 * time.Millisecond
+	// launchdUnloadBound covers launchd's 20 s default ExitTimeOut: bootout
+	// returns once the daemon has been signalled, and the job stays loaded
+	// until the daemon has drained and exited.
+	launchdUnloadBound = 30 * time.Second
+	// launchdBootstrapBound is how long bootstrap may keep answering exit 5.
+	launchdBootstrapBound = 30 * time.Second
+)
+
+// Start restarts the daemon: bootout, wait until launchd has unloaded the job,
+// then bootstrap. Never `kickstart -k` for a replaced binary: launchd respawns
+// it under the job's stale launch constraint and the kernel kills it with
+// OS_REASON_CODESIGNING (docs/isolated-runs.md, "Restarting the daemon").
 func (s launchdService) Start(ctx context.Context, run execx.Runner, _ io.Writer) error {
 	cmds := s.Commands()
 	bootout, bootstrap := cmds[0], cmds[1]
-	if _, err := run(ctx, bootout[0], bootout[1:]...); err != nil && !notLoaded(err) {
+	_, err := run(ctx, bootout[0], bootout[1:]...)
+	if err != nil && !notLoaded(err) {
 		return fmt.Errorf("launchctl bootout: %w", err)
-	} else if err == nil {
-		// launchd teardown of the old service registration is asynchronous.
-		// A brief pause prevents bootstrap from racing with teardown and failing with exit status 5.
-		time.Sleep(300 * time.Millisecond)
 	}
-	if _, err := run(ctx, bootstrap[0], bootstrap[1:]...); err != nil {
-		return fmt.Errorf("launchctl bootstrap: %w", err)
+	if err == nil {
+		if err := s.waitUnloaded(ctx, run); err != nil {
+			return err
+		}
 	}
-	return nil
+	for waited := time.Duration(0); ; waited += launchdPoll {
+		_, err := run(ctx, bootstrap[0], bootstrap[1:]...)
+		if err == nil {
+			return nil
+		}
+		if !bootstrapBusy(err) || waited >= launchdBootstrapBound {
+			return fmt.Errorf("launchctl bootstrap: %w", err)
+		}
+		if err := launchdSleep(ctx, launchdPoll); err != nil {
+			return err
+		}
+	}
+}
+
+// waitUnloaded polls `launchctl print` until the job is gone. Any print error
+// counts as gone (launchctl exits 113 for an unknown service): bootstrap's own
+// retry covers a misjudgement, and only a successful print proves it is loaded.
+func (s launchdService) waitUnloaded(ctx context.Context, run execx.Runner) error {
+	for waited := time.Duration(0); ; waited += launchdPoll {
+		if _, err := run(ctx, "launchctl", "print", s.target()+"/"+Label); err != nil {
+			return ctx.Err()
+		}
+		if waited >= launchdUnloadBound {
+			return fmt.Errorf("launchctl bootout: %s is still loaded after %s", Label, launchdUnloadBound)
+		}
+		if err := launchdSleep(ctx, launchdPoll); err != nil {
+			return err
+		}
+	}
+}
+
+// bootstrapBusy reports whether a bootstrap error is launchd's exit 5
+// "Input/output error", which means the old job is still unloading.
+func bootstrapBusy(err error) bool {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 5 {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "exit status 5") || strings.Contains(msg, "input/output error")
 }
 
 func (s launchdService) Stop(ctx context.Context, run execx.Runner) error {

@@ -3,6 +3,7 @@ package install_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,13 +92,14 @@ func TestNonIsolatedInstallStillTouchesLaunchd(t *testing.T) {
 	c.Isolated = false
 	f := &execx.Fake{Responses: map[string]execx.Result{
 		"launchctl bootout gui/501/dev.swarm.daemon":          {},
+		"launchctl print gui/501/dev.swarm.daemon":            {Err: errors.New("exit status 113: Could not find service")},
 		"launchctl bootstrap gui/501 " + install.PlistPath(c): {},
 	}}
 	if err := install.Install(context.Background(), c, f.Runner(), false, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := launchctlCalls(f); len(got) != 2 {
-		t.Errorf("launchctl calls = %v, want bootout + bootstrap", got)
+	if got := launchctlCalls(f); len(got) != 3 {
+		t.Errorf("launchctl calls = %v, want bootout + print + bootstrap", got)
 	}
 }
 
