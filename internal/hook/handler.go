@@ -20,12 +20,6 @@ import (
 	"github.com/AlexanderTar/swarmrun/internal/runtime"
 )
 
-var claudeCmdRe = regexp.MustCompile(`(?m)(?:^|[;&|()` + "`" + `]|\$\()\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:(?:exec|nohup|sudo|env)\s+)*(?:[\w./]*\/)?claude(\s|[;&|)` + "`" + `]|$)`)
-
-func isClaudeCommand(cmd string) bool {
-	return claudeCmdRe.MatchString(cmd)
-}
-
 // capPrompt is the 1000-rune cap every hook-recorded question prompt gets,
 // shared by extractQuestion and the codex question-reply binder so both
 // compute the same prompt text.
