@@ -76,6 +76,17 @@ func (s *Store) TransitionTx(ctx context.Context, tx *sql.Tx, key string, to Sta
 			return Item{}, err
 		}
 	}
+	// BUG-183: follow-up work that starts under a Done root puts the root back In progress. Creating,
+	// cancelling or archiving a task never does, so a mistaken follow-up can't strand a finished root.
+	if to == InProgress && it.ID != it.RootID {
+		root, err := s.getByID(ctx, tx, it.RootID)
+		if err != nil {
+			return Item{}, err
+		}
+		if err := s.reopenDoneRoot(ctx, tx, root); err != nil {
+			return Item{}, err
+		}
+	}
 	// moving a root out of review by hand costs its approved finish; reconcileRoot would
 	// otherwise put it straight back (BUG-116/119). The daemon's own move (workflow
 	// tryTransition) is not by hand and keeps the approval.
@@ -149,7 +160,12 @@ func (s *Store) staleApprovedFinish(ctx context.Context, tx *sql.Tx, it Item, re
 		return nil
 	}
 	kind := acceptKind(it.Type)
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM requests WHERE item_id = ? AND kind = ? AND state = 'approved'`, it.ID, kind)
+	// An approval whose finish is already recorded was used; follow-up work doesn't undo it (BUG-183).
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM requests WHERE item_id = ? AND kind = ? AND state = 'approved'
+		AND NOT EXISTS (SELECT 1 FROM item_merges m WHERE m.item_id = requests.item_id
+			AND m.integrated_checkpoint = json_extract(requests.binding_json, '$.integrated_checkpoint'))
+		AND NOT EXISTS (SELECT 1 FROM checkpoints c WHERE c.item_id = requests.item_id
+			AND c.resolution = 'finished:' || json_extract(requests.binding_json, '$.integrated_checkpoint'))`, it.ID, kind)
 	if err != nil {
 		return err
 	}
@@ -843,7 +859,7 @@ func (s *Store) setStatus(ctx context.Context, tx *sql.Tx, it *Item, to Status) 
 }
 
 // ReopenDoneRootTx moves a Done top-level epic, bug or chore back to In progress because new work was
-// integrated after its finish or a follow-up task was added under it (BUG-183). It does nothing for
+// integrated after its finish or a follow-up task started under it (BUG-183). It does nothing for
 // any other item, for a root another root resolved, or for a root that isn't Done. Reconcile then
 // opens the new finish request from a new integrated checkpoint. Only write paths call it: reconcile
 // never reopens a Done root, so rows an older binary wrote stay Done.

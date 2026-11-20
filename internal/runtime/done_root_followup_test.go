@@ -105,6 +105,23 @@ func TestReconcileDoesNotReopenHistoricalDoneRoot(t *testing.T) {
 	}
 }
 
+// startFollowUp readies a draft task as the user, then starts it as the daemon does once an agent on it has
+// written accepted.
+func startFollowUp(t *testing.T, s *Store, ses string, child items.Item) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.Items.Transition(ctx, child.Key, items.Ready, items.User("board")); err != nil {
+		t.Fatal(err)
+	}
+	var agentID string
+	mustQueryRow(t, s, &agentID, `SELECT agent_id FROM sessions WHERE id = ?`, ses)
+	mustExec(t, s.DB, `INSERT INTO checkpoints (id, agent_id, session_id, item_id, attempt, kind, summary, git_json, verify_json, created_at)
+		VALUES (?, ?, ?, ?, 1, 'accepted', 'on it', '[]', '[]', ?)`, "ckp_acc_"+child.Key, agentID, ses, child.ID, db.Millis(s.Now()))
+	if _, err := s.Items.Transition(ctx, child.Key, items.InProgress, items.Daemon()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func mustQueryRow(t *testing.T, s *Store, dest any, q string, args ...any) {
 	t.Helper()
 	if err := s.DB.QueryRowContext(context.Background(), q, args...).Scan(dest); err != nil {
@@ -112,16 +129,74 @@ func mustQueryRow(t *testing.T, s *Store, dest any, q string, args ...any) {
 	}
 }
 
-// BUG-183: a follow-up task created under a Done root puts the root back In progress, so the board and the
-// daemon agree there is work in flight.
-func TestFollowUpTaskReopensDoneRoot(t *testing.T) {
+// BUG-183: a follow-up task that starts under a Done root puts the root back In progress, so the board and
+// the daemon agree there is work in flight. A task that is only created (a draft) does not.
+func TestFollowUpTaskStartReopensDoneRoot(t *testing.T) {
 	s, ses, key := customFinishFixture(t)
 	finishKept(t, s, ses)
-	if _, err := s.Items.Create(context.Background(), items.CreateInput{Type: items.Task, ParentKey: key, Title: "Correction"}, items.User("board")); err != nil {
+	ctx := context.Background()
+	child, err := s.Items.Create(ctx, items.CreateInput{Type: items.Task, ParentKey: key, Title: "Correction"}, items.User("board"))
+	if err != nil {
 		t.Fatal(err)
 	}
+	if st := itemStatus(t, s, key); st != items.Done {
+		t.Fatalf("status after only creating a follow-up task = %s, want done", st)
+	}
+	startFollowUp(t, s, ses, child)
 	if st := itemStatus(t, s, key); st != items.InProgress {
-		t.Fatalf("status after a follow-up task = %s, want in_progress", st)
+		t.Fatalf("status after a follow-up task starts = %s, want in_progress", st)
+	}
+}
+
+// A follow-up task that is created and then cancelled or archived never started: the root stays Done and its
+// used finish request keeps its approval.
+func TestCancelledOrArchivedFollowUpLeavesDoneRootAlone(t *testing.T) {
+	for _, how := range []string{"cancel", "archive"} {
+		t.Run(how, func(t *testing.T) {
+			s, ses, key := customFinishFixture(t)
+			finishKept(t, s, ses)
+			ctx := context.Background()
+			child, err := s.Items.Create(ctx, items.CreateInput{Type: items.Task, ParentKey: key, Title: "Mistake"}, items.User("board"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if how == "cancel" {
+				_, err = s.Items.Transition(ctx, child.Key, items.Cancelled, items.User("board"))
+			} else {
+				mustExec(t, s.DB, `UPDATE items SET archived_at = 1 WHERE id = ?`, child.ID)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Items.Reconcile(ctx, key); err != nil {
+				t.Fatal(err)
+			}
+			if st := itemStatus(t, s, key); st != items.Done {
+				t.Fatalf("status = %s, want done", st)
+			}
+			if st := acceptState(t, s, key); st != "approved" {
+				t.Fatalf("used finish request = %s, want approved", st)
+			}
+		})
+	}
+}
+
+// A follow-up that started and was then cancelled leaves the root In progress; the used finish request keeps
+// its approval history instead of turning stale.
+func TestStartedThenCancelledFollowUpKeepsUsedApproval(t *testing.T) {
+	s, ses, key := customFinishFixture(t)
+	finishKept(t, s, ses)
+	ctx := context.Background()
+	child, err := s.Items.Create(ctx, items.CreateInput{Type: items.Task, ParentKey: key, Title: "Correction"}, items.User("board"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	startFollowUp(t, s, ses, child)
+	if _, err := s.Items.Create(ctx, items.CreateInput{Type: items.Task, ParentKey: key, Title: "Draft more"}, items.User("board")); err != nil {
+		t.Fatal(err)
+	}
+	if st := acceptState(t, s, key); st != "approved" {
+		t.Fatalf("used finish request = %s, want approved", st)
 	}
 }
 
