@@ -438,3 +438,179 @@ func TestIsClaudeCommandAllowsWrapperData(t *testing.T) {
 		}
 	}
 }
+
+// A script written by one command and run by a later one in the same command
+// line is read as code, whatever way it is run.
+func TestIsClaudeCommandBlocksScriptWrittenThenRun(t *testing.T) {
+	for _, s := range []string{
+		"echo claude > s.sh; sh s.sh",
+		"echo claude > s.sh; bash s.sh",
+		"echo claude > s.sh && bash -x s.sh",
+		"echo claude >> s.sh; . s.sh",
+		"echo claude > s.sh; source s.sh",
+		"echo claude > s.sh; ./s.sh",
+		"echo claude > s.sh; chmod +x s.sh && ./s.sh",
+		"echo claude > s.sh; sudo bash s.sh",
+		"echo claude > s.sh; exec ./s.sh",
+		"echo claude > ./s.sh; sh s.sh",
+		"echo claude > /tmp/s.sh; sh /tmp/s.sh",
+		"echo claude > 's.sh'; sh \"s.sh\"",
+		"echo claude | tee s.sh; sh s.sh",
+		"echo claude | tee -a s.sh >/dev/null; sh s.sh",
+		"printf 'x\\nclaude -p hi\\n' > s.sh; sh s.sh",
+		"cat <<< 'claude -p hi' > s.sh; sh s.sh",
+		"cat > s.sh <<EOF\nclaude -p hi\nEOF\nsh s.sh",
+		"cat <<'EOF' > s.sh\nclaude -p hi\nEOF\nsh s.sh",
+		"echo claude > s.sh\nsh s.sh",
+		"echo claude > s.sh; echo hi; sh s.sh",
+		"echo claude > s.sh; (sh s.sh)",
+		"echo claude > s.sh; echo $(sh s.sh)",
+		// The heredoc delimiter is not the next command word.
+		"<<EOF claude -p hi\nx\nEOF",
+		"cat <<EOF > s.sh; sh s.sh\nclaude -p hi\nEOF",
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (script written then run)", s)
+		}
+	}
+}
+
+// Text written to a file that nothing in the line runs, or that does not read
+// as code, is data: docs mentioning the CLI mid-line, a file that is only read.
+func TestIsClaudeCommandAllowsTextWrittenNotRun(t *testing.T) {
+	for _, s := range []string{
+		"echo 'a\nclaude -p hi\nb' > notes.txt",
+		"echo claude > s.sh",
+		"echo claude > s.sh; cat s.sh",
+		"echo claude > s.sh; sh other.sh",
+		"echo claude > s.sh; grep claude s.sh",
+		"echo claude > s.sh; bash -c 'cat s.sh'",
+		"echo claude > s.sh; rm s.sh",
+		"echo claude > s.sh; chmod +x s.sh",
+		"sh s.sh; echo claude > s.sh",
+		"echo claude > $f; sh $f",
+		"echo 'run claude -p to start' > README.md; sh README.md",
+		"echo 'see claude -p docs' > notes.md; sh notes.md",
+		"echo 'the claude CLI' >> docs.md; cat docs.md",
+		"echo 'a\nthe claude CLI\nb' | tee docs.md; sh docs.md",
+		"echo claude > a.sh; sh b.sh",
+		"cat > notes.md <<EOF\nthe claude CLI\nEOF\ncat notes.md",
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (data)", s)
+		}
+	}
+}
+
+// A shell that reads stdin runs what the earlier pipeline stages print, so
+// that text is code. A shell given -c or a script file reads no stdin script.
+func TestIsClaudeCommandBlocksTextPipedToShell(t *testing.T) {
+	for _, s := range []string{
+		"echo '(claude -p hi)' | sh",
+		"echo claude | sh",
+		"echo claude -p hi | bash",
+		"echo -e 'a\\nclaude -p hi' | zsh",
+		"printf 'x\\nclaude -p hi\\n' | sh",
+		"echo 'a\nclaude -p hi\nb' | sh",
+		"echo claude | sh -s",
+		"echo claude | sh -s -- arg",
+		"echo claude | bash -x",
+		"echo claude | tr a-z a-z | sh",
+		"echo claude |& sh",
+		"echo claude |\nsh",
+		"echo claude | (sh)",
+		"echo claude | { sh; }",
+		"echo ok; echo claude | dash",
+		"echo claude | ksh && true",
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (script piped to a shell)", s)
+		}
+	}
+}
+
+// Text piped to a command that is not a stdin shell, or to a shell that reads
+// a file or a -c string, is data; so is text a pipeline did not feed.
+func TestIsClaudeCommandAllowsTextNotPipedToShell(t *testing.T) {
+	for _, s := range []string{
+		"echo claude | grep claude",
+		"echo claude | cat",
+		"echo claude | wc -l",
+		"echo claude | sh script.sh",
+		"echo claude | sh -c 'cat'",
+		"echo claude | bash -- script.sh",
+		"echo claude; sh",
+		"echo claude && sh",
+		"echo claude || sh",
+		"echo claude |\ngrep x\nsh",
+		"echo claude\nsh",
+		"echo 'see the claude -p docs' | sh",
+		"echo 'run claude -p mid-line' | tee notes.md",
+		"echo 'a claude b' | sh -c 'wc -w'",
+		"x=$(echo claude | cat); sh",
+		"echo hi | sh",
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (data)", s)
+		}
+	}
+}
+
+// A lone - makes a shell read its script from stdin, so piped text is code.
+func TestIsClaudeCommandBlocksTextPipedToShellDash(t *testing.T) {
+	for _, s := range []string{
+		"echo claude | sh -",
+		"echo claude | bash -x -",
+		"echo claude | sh -s -",
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (script piped to a stdin shell)", s)
+		}
+	}
+	for _, s := range []string{
+		"echo claude | sh script.sh -",
+		"echo claude | sh -c 'cat' -",
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (script file or -c string)", s)
+		}
+	}
+}
+
+// A shell fed a written file on stdin, a heredoc body run by a command that
+// precedes the newline, and &> output all read the text as code.
+func TestIsClaudeCommandBlocksWrittenScriptRunForms(t *testing.T) {
+	for _, s := range []string{
+		"echo claude > s.sh; sh < s.sh",
+		"echo claude > s.sh; bash -s < s.sh",
+		"echo claude > s.sh; sh < ./s.sh",
+		"echo claude &> s.sh; sh s.sh",
+		"echo claude &>> s.sh; sh s.sh",
+		"cat <<EOF > s.sh && chmod +x s.sh && ./s.sh\nclaude -p hi\nEOF",
+		"cat <<EOF > s.sh; . s.sh\nclaude -p hi\nEOF",
+		"cat <<EOF > s.sh; source s.sh\nclaude -p hi\nEOF",
+		"cat <<EOF > s.sh; ./s.sh\nclaude -p hi\nEOF",
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (script written then run)", s)
+		}
+	}
+}
+
+// The data twins of the forms above stay allowed.
+func TestIsClaudeCommandAllowsWrittenScriptRunData(t *testing.T) {
+	for _, s := range []string{
+		"echo claude > s.sh; sh < other.sh",
+		"sh < s.sh; echo claude > s.sh",
+		"echo claude > s.sh; cat < s.sh",
+		"echo hi &> out.log; cat out.log",
+		"echo 'see claude -p docs' &> notes.md; sh notes.md",
+		"cat <<EOF > notes.md; sh notes.md\nthe claude CLI\nEOF",
+		"cat <<EOF > notes.md; . other.sh\nclaude -p hi\nEOF",
+		"sleep 1 & echo claude",
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (data)", s)
+		}
+	}
+}
