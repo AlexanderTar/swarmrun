@@ -326,6 +326,90 @@ func TestIsClaudeCommandAllowsRound2Data(t *testing.T) {
 	}
 }
 
+// An expansion glued to a quoted or escaped name: the quotes are gone when the
+// shell runs the word, and with the variable unset it runs claude. The scanner
+// must see the expansion before the text is decoded, so quoting survives.
+func TestIsClaudeCommandBlocksGluedExpansions(t *testing.T) {
+	for _, s := range []string{
+		`"$x"claude`,
+		`$x'claude'`,
+		`$x"claude"`,
+		`$x\claude`,
+		`"${x}"claude -p hi`,
+		`"${x:-$(true)}"claude`,
+		`${x:-'}'}claude`,
+		`$1 claude`,
+		`"$@"claude`,
+		`ls; "$x"/usr/bin/claude`,
+		`echo ${x:-$(claude)}`,
+		`echo "${x:-$(claude)}"`,
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (expansion glued to the name)", s)
+		}
+	}
+}
+
+// Text that only looks like an expansion is data: a single-quoted or escaped
+// $ is a literal character, so these words never reduce to the bare name.
+func TestIsClaudeCommandAllowsLiteralDollar(t *testing.T) {
+	for _, s := range []string{
+		`'$x'claude`,
+		`"\$x"claude`,
+		`\$xclaude`,
+		`'${x}'claude`,
+		`$ claude`,
+		`echo "$x"claude`,
+		`ls "$x"claude`,
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (literal $ is data)", s)
+		}
+	}
+}
+
+// trap's action string is code the shell runs later, like eval's argument.
+func TestIsClaudeCommandBlocksTrapAction(t *testing.T) {
+	for _, s := range []string{
+		`trap 'claude' EXIT`,
+		`trap "claude -p hi" INT TERM`,
+		`trap -- 'claude' EXIT`,
+		`trap 'ls; claude' ERR`,
+		`trap '"$x"claude' EXIT`,
+		`trap claude EXIT`,
+		`ls; trap 'claude' EXIT`,
+		`FOO=1 trap 'claude' EXIT`,
+		`bash -c "trap 'claude' EXIT"`,
+		`trap 'trap claude INT' EXIT`,
+		`trap 'echo $(claude)' EXIT`,
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (trap action is code)", s)
+		}
+	}
+}
+
+// Traps that run nothing, reset a handler, list handlers, or whose action only
+// mentions the name as data stay allowed.
+func TestIsClaudeCommandAllowsTrapData(t *testing.T) {
+	for _, s := range []string{
+		`trap 'echo claude' EXIT`,
+		`trap 'rm -f claude.lock' EXIT INT`,
+		`trap - EXIT`,
+		`trap '' INT`,
+		`trap -p`,
+		`trap -p claude`,
+		`trap -l`,
+		`trap`,
+		`trap 'cleanup' EXIT claude`,
+		`trap 'grep -c "claude -p" log' EXIT`,
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (trap data)", s)
+		}
+	}
+}
+
 // The same wrappers around an ordinary command, and read-only lookups of the
 // agent's name, are not invocations.
 func TestIsClaudeCommandAllowsWrapperData(t *testing.T) {

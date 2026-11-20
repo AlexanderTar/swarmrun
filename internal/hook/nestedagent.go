@@ -19,12 +19,13 @@ import (
 // maxShellDepth is blocked unread; it does not fail closed on input it cannot
 // read.
 //
-// Known limits, shared with the regex it replaces: a command name produced by
-// a variable, glob or brace expansion (`$c`, `cl*de`, `{claude,}`), a name in
-// another letter case (`Claude`, which runs on a case-insensitive file
-// system such as macOS), a script fed on stdin by a pipe (`echo claude | sh`),
-// the body of a heredoc to anything but a shell, and wrappers it does not
-// know.
+// Known limits, shared with the regex it replaces: a command name that an
+// expansion produces (a variable's value, `cl*de`, `{claude,}`: an expansion
+// only counts as empty before a literal name), a name in another letter case
+// (`Claude`, which runs on a case-insensitive file system such as macOS), a
+// script fed on stdin by a pipe (`echo claude | sh`), the body of a heredoc to
+// anything but a shell, and wrappers or builtins that run a string it does not
+// know. It does read the strings of sh -c, su -c, env -S, eval and trap.
 func isClaudeCommand(cmd string) bool {
 	return newShellScan(cmd, 0).blocked()
 }
@@ -34,9 +35,10 @@ const maxShellDepth = 8
 
 var assignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=`)
 
-// leadingExpansion matches the expansions at the start of a word: a marked
-// substitution or an unquoted $name, ${...} or special parameter.
-var leadingExpansion = regexp.MustCompile(`^(\x00|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!$-])+`)
+// leadingExpansion matches the markers at the start of a word: the scanner
+// writes one for every expansion ($(...), `...`, $name, ${...}) before the
+// word is decoded, so quoting around a name cannot hide or fake one.
+var leadingExpansion = regexp.MustCompile(`^\x00+`)
 
 // shellMarker stands in for text the scanner cannot know (an expansion) and
 // shellRedir marks a redirection operator, whose next word is a file name.
@@ -169,6 +171,18 @@ func (p *shellScan) list(sub bool) bool {
 				return true
 			}
 			cur.WriteString(shellMarker)
+			inWord = true
+		case c == '$':
+			ok, hit := p.expansion(false)
+			if hit {
+				return true
+			}
+			if ok {
+				cur.WriteString(shellMarker)
+			} else {
+				cur.WriteByte(c)
+				p.pos++
+			}
 			inWord = true
 		case (c == '<' || c == '>') && p.peek(1) == '(':
 			p.pos += 2
@@ -320,6 +334,17 @@ func (p *shellScan) dquote() (bool, string) {
 				return true, ""
 			}
 			b.WriteString(shellMarker)
+		case c == '$':
+			ok, hit := p.expansion(true)
+			if hit {
+				return true, ""
+			}
+			if ok {
+				b.WriteString(shellMarker)
+			} else {
+				b.WriteByte(c)
+				p.pos++
+			}
 		case c == '`':
 			p.pos++
 			if p.backtick() {
@@ -332,6 +357,76 @@ func (p *shellScan) dquote() (bool, string) {
 		}
 	}
 	return false, b.String()
+}
+
+// expansion consumes the parameter expansion at p.pos ($name, ${...}, $1,
+// $@ ...) and reports whether there was one. hit is set when a command
+// substitution inside ${...} starts the agent.
+func (p *shellScan) expansion(inDquote bool) (ok, hit bool) {
+	n := p.peek(1)
+	switch {
+	case n == '{':
+		p.pos += 2
+		return true, p.braceBody(inDquote)
+	case n == '_' || n >= 'a' && n <= 'z' || n >= 'A' && n <= 'Z':
+		p.pos++
+		for c := p.peek(0); c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'; c = p.peek(0) {
+			p.pos++
+		}
+		return true, false
+	case n != 0 && strings.IndexByte("0123456789@*#?!$-", n) >= 0:
+		p.pos += 2
+		return true, false
+	}
+	return false, false
+}
+
+// braceBody skips a ${...} body (opener consumed) to its closing brace. Code
+// inside it (command substitutions) is scanned; quotes and nested ${ } are
+// skipped so a quoted brace does not end it early.
+func (p *shellScan) braceBody(inDquote bool) bool {
+	for p.pos < len(p.s) {
+		switch c := p.s[p.pos]; {
+		case c == '}':
+			p.pos++
+			return false
+		case c == '\\':
+			p.pos += 2
+		case c == '\'' && !inDquote:
+			p.pos++
+			i := strings.IndexByte(p.s[p.pos:], '\'')
+			if i < 0 {
+				i = len(p.s) - p.pos
+			}
+			p.pos += i + 1
+		case c == '"' && !inDquote:
+			p.pos++
+			if hit, _ := p.dquote(); hit {
+				return true
+			}
+		case c == '$' && p.peek(1) == '(':
+			p.pos += 2
+			if p.sub() {
+				return true
+			}
+		case c == '$':
+			ok, hit := p.expansion(inDquote)
+			if hit {
+				return true
+			}
+			if !ok { // a literal $
+				p.pos++
+			}
+		case c == '`':
+			p.pos++
+			if p.backtick() {
+				return true
+			}
+		default:
+			p.pos++
+		}
+	}
+	return false
 }
 
 // backtick scans a backtick command substitution (opening tick consumed).
@@ -579,6 +674,9 @@ func (p *shellScan) checkCommand(words []string) bool {
 			p.shellSeen = true
 			return newShellScan(strings.Join(words[i+1:], " "), p.depth+1).blocked()
 		}
+		if base == "trap" {
+			return p.checkTrap(words[i+1:])
+		}
 		return false
 	}
 	return false
@@ -616,6 +714,26 @@ func envSplitString(args []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// checkTrap judges the action string of `trap [--] ACTION SIGNAL...`, which
+// the shell runs as code when the signal arrives. -l and -p only list.
+func (p *shellScan) checkTrap(args []string) bool {
+	for i, a := range args {
+		switch {
+		case a == "--":
+			if i+1 < len(args) {
+				return newShellScan(args[i+1], p.depth+1).blocked()
+			}
+			return false
+		case a == "-l" || a == "-p" || a == "-lp" || a == "-pl":
+			return false
+		case len(a) > 1 && a[0] == '-':
+		default:
+			return newShellScan(a, p.depth+1).blocked()
+		}
+	}
+	return false
 }
 
 // checkFindExec judges the command run by find -exec/-execdir/-ok/-okdir,
