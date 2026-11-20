@@ -138,11 +138,11 @@ func (s launchdService) waitUnloaded(ctx context.Context, run execx.Runner) erro
 	}
 }
 
-// bootstrapBusy reports whether a bootstrap error is launchd's exit 5
-// "Input/output error", which means the old job is still unloading.
 // exitFive matches the text of exit code 5 only: not 52, 500, or any other code that starts with 5.
 var exitFive = regexp.MustCompile(`exit status 5(\D|$)`)
 
+// bootstrapBusy reports whether a bootstrap error is launchd's exit 5
+// "Input/output error", which means the old job is still unloading.
 func bootstrapBusy(err error) bool {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) && ee.ExitCode() == 5 {

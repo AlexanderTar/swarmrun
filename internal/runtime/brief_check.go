@@ -13,23 +13,23 @@ import (
 // lines, the review tree), and refuses with the one cap message when RenderBrief can't make one fit. It is
 // the check swarm_workflow start runs in preflightBriefs, made when the text is written (plan registration,
 // create, update), so an over-cap task is refused before the user approves it. It reads no database.
-func CheckItemBriefs(it items.Item) error {
+// Known ceiling: it models one worktree line and omits gateDirLines, so a multi-repo task can still be
+// refused at start; swarm_workflow start's preflightBriefs stays the exact check.
+func CheckItemBriefs(it items.Item) error { return checkItemBriefs(it, it.Key) }
+
+// checkItemBriefs renders with it.Key and names label in the refusal. A plan task has no key yet: its
+// caller passes a stand-in key and the task's title as the label, so a long title can't inflate the
+// measured kickoff (RenderBrief prints the key in the header and once per collapsed unit).
+func checkItemBriefs(it items.Item, label string) error {
 	if it.Workflow == nil {
 		return nil
 	}
 	for _, step := range it.Workflow.EffectiveSteps() {
-		roles := step.Review
-		if step.Run != "" {
-			roles = []string{step.Run}
-		}
-		for _, role := range roles {
-			name, err := defaultName(Role(role), it.Title)
-			if err != nil {
+		for _, role := range stepRoles(step) {
+			brief := BriefForStep(it, *it.Workflow, step.ID, 1, 0, []string{"docs/design/artifact.md"})
+			if err := setBriefIdentity(&brief, it, role, "EPIC-1000", standInOrchestrator); err != nil {
 				return err
 			}
-			brief := BriefForStep(it, *it.Workflow, step.ID, 1, 0, []string{"docs/design/artifact.md"})
-			brief.Key, brief.Title, brief.Name, brief.Role = it.Key, it.Title, name, Role(role)
-			brief.RootKey, brief.ParentName = "EPIC-1000", standInOrchestrator
 			wt := BriefWorktree{Repo: "swarmrun", Path: standInWorktreePath, Branch: "epic-1000/" + strings.Repeat("s", 24),
 				BaseSHA7: "abcdef0", Mode: "rw"}
 			if step.Run == "" {
@@ -39,7 +39,7 @@ func CheckItemBriefs(it items.Item) error {
 			if _, err := RenderBrief(brief); err != nil {
 				full := utf8.RuneCountInString(renderBriefOnce(brief, false, false))
 				return &items.Error{Code: items.CodeBadRequest, Message: fmt.Sprintf("%s: %s (the %s kickoff is %d characters)",
-					it.Key, err.Error(), role, full)}
+					label, err.Error(), role, full)}
 			}
 		}
 	}
@@ -47,12 +47,13 @@ func CheckItemBriefs(it items.Item) error {
 }
 
 const (
+	standInTaskKey      = "TASK-99999"
 	standInOrchestrator = "a-typical-orchestrator-agent-name-orchestrator"
 	standInWorktreePath = "/Users/someone/.swarm/worktrees/swarmrun--a-typical-worktree-name"
 )
 
 // checkTreeBriefs is CheckItemBriefs for every task of a plan's swarm-tree, run when the plan is
-// registered. Each task is named by its title (it has no key yet).
+// registered. A task has no key yet: it is measured with a stand-in key and named by its title.
 func checkTreeBriefs(t Tree) error {
 	for _, n := range t.Tasks() {
 		wf, err := resolvedTreeWorkflow(n)
@@ -63,8 +64,9 @@ func checkTreeBriefs(t Tree) error {
 		for i, u := range n.Units {
 			units[i] = items.Unit{Title: u.Title, Steps: u.Steps}
 		}
-		if err := CheckItemBriefs(items.Item{Key: fmt.Sprintf("Task %q", n.Title), Type: items.Task, Title: n.Title,
-			Brief: n.Brief, Acceptance: n.Acceptance, Steps: n.Steps, Units: units, Verify: n.Verify, Workflow: wf}); err != nil {
+		if err := checkItemBriefs(items.Item{Key: standInTaskKey, Type: items.Task, Title: n.Title,
+			Brief: n.Brief, Acceptance: n.Acceptance, Steps: n.Steps, Units: units, Verify: n.Verify, Workflow: wf},
+			fmt.Sprintf("Task %q", n.Title)); err != nil {
 			return fmt.Errorf("tree_invalid: %v", err)
 		}
 	}

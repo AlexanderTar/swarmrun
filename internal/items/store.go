@@ -784,7 +784,7 @@ func (s *Store) UpdateTx(ctx context.Context, tx *sql.Tx, key string, p Patch, b
 				return Item{}, err
 			}
 		}
-		if s.CheckBriefs != nil && (p.Brief != nil || p.Acceptance != nil || p.Units != nil || p.Verify != nil || p.Steps != nil || p.Workflow != nil) {
+		if s.CheckBriefs != nil && (p.Title != nil || p.Brief != nil || p.Acceptance != nil || p.Units != nil || p.Verify != nil || p.Steps != nil || p.Workflow != nil) {
 			if err := s.CheckBriefs(it); err != nil {
 				return Item{}, err
 			}

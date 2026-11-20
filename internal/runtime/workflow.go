@@ -252,21 +252,14 @@ func (s *Store) preflightBriefs(ctx context.Context, orch Agent, it items.Item, 
 		return err
 	}
 	for _, step := range spec.EffectiveSteps() {
-		roles := step.Review
-		if step.Run != "" {
-			roles = []string{step.Run}
-		}
-		for _, role := range roles {
+		for _, role := range stepRoles(step) {
 			brief, _, err := s.stepBrief(ctx, wf, it, wfRunRow{StepID: step.ID, Role: role, Round: 1})
 			if err != nil {
 				return err
 			}
-			name, err := defaultName(Role(role), it.Title)
-			if err != nil {
+			if err := setBriefIdentity(&brief, it, role, it.RootKey, orch.Name); err != nil {
 				return err
 			}
-			brief.Key, brief.Title, brief.Name, brief.Role = it.Key, it.Title, name, Role(role)
-			brief.RootKey, brief.ParentName = it.RootKey, orch.Name
 			if len(brief.Context) == 0 {
 				brief.Context = []string{"docs/design/artifact.md"}
 			}
@@ -292,6 +285,27 @@ func (s *Store) preflightBriefs(ctx context.Context, orch Agent, it items.Item, 
 			}
 		}
 	}
+	return nil
+}
+
+// stepRoles lists the roles whose kickoff a step can spawn: its run role, or each of its reviewers.
+// preflightBriefs (at start) and CheckItemBriefs (when the text is written) both walk these.
+func stepRoles(step workflow.Step) []string {
+	if step.Run != "" {
+		return []string{step.Run}
+	}
+	return step.Review
+}
+
+// setBriefIdentity fills the fields a kickoff takes from who it is for. Shared by preflightBriefs and
+// CheckItemBriefs so the two measure the same header.
+func setBriefIdentity(brief *BriefInput, it items.Item, role, rootKey, parent string) error {
+	name, err := defaultName(Role(role), it.Title)
+	if err != nil {
+		return err
+	}
+	brief.Key, brief.Title, brief.Name, brief.Role = it.Key, it.Title, name, Role(role)
+	brief.RootKey, brief.ParentName = rootKey, parent
 	return nil
 }
 
