@@ -368,6 +368,48 @@ func TestIsClaudeCommandAllowsLiteralDollar(t *testing.T) {
 	}
 }
 
+// trap's action string is code the shell runs later, like eval's argument.
+func TestIsClaudeCommandBlocksTrapAction(t *testing.T) {
+	for _, s := range []string{
+		`trap 'claude' EXIT`,
+		`trap "claude -p hi" INT TERM`,
+		`trap -- 'claude' EXIT`,
+		`trap 'ls; claude' ERR`,
+		`trap '"$x"claude' EXIT`,
+		`trap claude EXIT`,
+		`ls; trap 'claude' EXIT`,
+		`FOO=1 trap 'claude' EXIT`,
+		`bash -c "trap 'claude' EXIT"`,
+		`trap 'trap claude INT' EXIT`,
+		`trap 'echo $(claude)' EXIT`,
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (trap action is code)", s)
+		}
+	}
+}
+
+// Traps that run nothing, reset a handler, list handlers, or whose action only
+// mentions the name as data stay allowed.
+func TestIsClaudeCommandAllowsTrapData(t *testing.T) {
+	for _, s := range []string{
+		`trap 'echo claude' EXIT`,
+		`trap 'rm -f claude.lock' EXIT INT`,
+		`trap - EXIT`,
+		`trap '' INT`,
+		`trap -p`,
+		`trap -p claude`,
+		`trap -l`,
+		`trap`,
+		`trap 'cleanup' EXIT claude`,
+		`trap 'grep -c "claude -p" log' EXIT`,
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (trap data)", s)
+		}
+	}
+}
+
 // The same wrappers around an ordinary command, and read-only lookups of the
 // agent's name, are not invocations.
 func TestIsClaudeCommandAllowsWrapperData(t *testing.T) {

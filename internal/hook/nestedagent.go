@@ -19,12 +19,13 @@ import (
 // maxShellDepth is blocked unread; it does not fail closed on input it cannot
 // read.
 //
-// Known limits, shared with the regex it replaces: a command name produced by
-// a variable, glob or brace expansion (`$c`, `cl*de`, `{claude,}`), a name in
-// another letter case (`Claude`, which runs on a case-insensitive file
-// system such as macOS), a script fed on stdin by a pipe (`echo claude | sh`),
-// the body of a heredoc to anything but a shell, and wrappers it does not
-// know.
+// Known limits, shared with the regex it replaces: a command name that an
+// expansion produces (a variable's value, `cl*de`, `{claude,}`: an expansion
+// only counts as empty before a literal name), a name in another letter case
+// (`Claude`, which runs on a case-insensitive file system such as macOS), a
+// script fed on stdin by a pipe (`echo claude | sh`), the body of a heredoc to
+// anything but a shell, and wrappers or builtins that run a string it does not
+// know. It does read the strings of sh -c, su -c, env -S, eval and trap.
 func isClaudeCommand(cmd string) bool {
 	return newShellScan(cmd, 0).blocked()
 }
@@ -673,6 +674,9 @@ func (p *shellScan) checkCommand(words []string) bool {
 			p.shellSeen = true
 			return newShellScan(strings.Join(words[i+1:], " "), p.depth+1).blocked()
 		}
+		if base == "trap" {
+			return p.checkTrap(words[i+1:])
+		}
 		return false
 	}
 	return false
@@ -710,6 +714,26 @@ func envSplitString(args []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// checkTrap judges the action string of `trap [--] ACTION SIGNAL...`, which
+// the shell runs as code when the signal arrives. -l and -p only list.
+func (p *shellScan) checkTrap(args []string) bool {
+	for i, a := range args {
+		switch {
+		case a == "--":
+			if i+1 < len(args) {
+				return newShellScan(args[i+1], p.depth+1).blocked()
+			}
+			return false
+		case a == "-l" || a == "-p" || a == "-lp" || a == "-pl":
+			return false
+		case len(a) > 1 && a[0] == '-':
+		default:
+			return newShellScan(a, p.depth+1).blocked()
+		}
+	}
+	return false
 }
 
 // checkFindExec judges the command run by find -exec/-execdir/-ok/-okdir,
