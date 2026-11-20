@@ -77,8 +77,8 @@ func TestResumeRetryAfterExhaustedRoundsSpawnsFreshAgentForFinishedBuilder(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(fresh.KindReason, "user asked") {
-		t.Fatalf("fresh builder kind reason = %q, want it to record the role override set before the resume", fresh.KindReason)
+	if fresh.Model != "fake-1" || !strings.Contains(fresh.KindReason, "user asked") {
+		t.Fatalf("fresh builder model %q (reason %q), want the overridden model fake-1 from the override set before the resume", fresh.Model, fresh.KindReason)
 	}
 	if n := countHeld(); n != 0 {
 		t.Fatalf("%d review worktree reservations of the exhausted round still held after the bump, want 0", n)

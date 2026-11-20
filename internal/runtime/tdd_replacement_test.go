@@ -219,3 +219,36 @@ func TestTDDGateDoesNotCarryWithoutCommitsInHistory(t *testing.T) {
 		t.Fatalf("err = %v, want %q", err, want)
 	}
 }
+
+// Two greens recorded before a single commit anchor to the same HEAD, so the
+// first commit after it cannot say which unit it holds: neither carries.
+func TestTDDGateDoesNotCarryUnitsSharingAnAnchor(t *testing.T) {
+	e := replacementFixture(t)
+	e.record(1)
+	e.record(2)
+	commitAt(t, e.dir, "u1", e.endSec())
+	commitAt(t, e.dir, "u2", e.endSec()+3600) // the fresh agent's, no evidence
+	head := commitAt(t, e.dir, "u3", e.endSec()+3601)
+	err := completeUnit3(t, e.s, e.ses, head)
+	want := `TDD evidence missing for unit(s) 1,2: record red then green with "unit": <n>.` + hintCopy
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+}
+
+// A carried unit's file with a non-ASCII name, rewritten this round, still
+// counts as changed.
+func TestTDDGateDoesNotCarryUnitRewrittenWithNonASCIIName(t *testing.T) {
+	e := replacementFixture(t)
+	e.record(1)
+	commitAt(t, e.dir, "é1", e.endSec())
+	e.record(2)
+	commitAt(t, e.dir, "u2", e.endSec())
+	commitAt(t, e.dir, "é1", e.endSec()+3600)
+	head := commitAt(t, e.dir, "u3", e.endSec()+3601)
+	err := completeUnit3(t, e.s, e.ses, head)
+	want := `TDD evidence missing for unit(s) 1: record red then green with "unit": <n>.` + hintCopy
+	if err == nil || err.Error() != want {
+		t.Fatalf("err = %v, want %q", err, want)
+	}
+}

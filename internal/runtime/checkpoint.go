@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -606,7 +607,7 @@ type earlierProof struct {
 //
 // ponytail: the unit's commit is "the first commit after its green", which
 // holds for the one-commit-per-unit protocol (green, commit, next unit); two
-// greens recorded before a single commit anchor to the same commit. Change
+// greens anchored to the same HEADs are ambiguous, so neither carries. Change
 // detection is by file: a fresh agent editing a file a carried unit's commit
 // touched (even for another unit) forces new red/green or a waiver.
 func (s *Store) carryFromEarlierAgents(ctx context.Context, tx *sql.Tx, run workflowRun, a Agent, in CheckpointInput, entries []Verify, left []int) ([]int, error) {
@@ -637,6 +638,12 @@ func (s *Store) carryFromEarlierAgents(ctx context.Context, tx *sql.Tx, run work
 		return nil, err
 	}
 
+	proofs := make([]map[int]earlierProof, len(earlier))
+	for i, id := range earlier {
+		if proofs[i], err = s.earlierAgentProofs(ctx, tx, id); err != nil {
+			return nil, err
+		}
+	}
 	var out []int
 	for _, u := range left {
 		if slices.ContainsFunc(entries, func(v Verify) bool { return v.Unit == u }) {
@@ -644,12 +651,9 @@ func (s *Store) carryFromEarlierAgents(ctx context.Context, tx *sql.Tx, run work
 			continue
 		}
 		carried := false
-		for _, id := range earlier {
-			p, ok, err := s.earlierAgentProof(ctx, tx, id, u)
-			if err != nil {
-				return nil, err
-			}
-			if ok && s.unitCommitCarries(ctx, wts, in.Git, p) {
+		for _, byUnit := range proofs {
+			p, ok := byUnit[u]
+			if ok && !sharesAnchor(byUnit, u) && s.unitCommitCarries(ctx, wts, in.Git, p) {
 				carried = true
 				break
 			}
@@ -661,51 +665,67 @@ func (s *Store) carryFromEarlierAgents(ctx context.Context, tx *sql.Tx, run work
 	return out, nil
 }
 
-// earlierAgentProof finds unit's first red-then-green on agentID's
-// checkpoints, the worktree HEADs recorded with that green, and the end of
-// that agent's activity. A green without recorded heads (written by an older
-// daemon) never carries.
-func (s *Store) earlierAgentProof(ctx context.Context, tx *sql.Tx, agentID string, unit int) (earlierProof, bool, error) {
+// earlierAgentProofs finds, for every unit agentID proved, its first
+// red-then-green on the agent's checkpoints, the worktree HEADs recorded with
+// that green, and the end of that agent's activity. A green without recorded
+// heads (written by an older daemon) never carries.
+func (s *Store) earlierAgentProofs(ctx context.Context, tx *sql.Tx, agentID string) (map[int]earlierProof, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT created_at, verify_json FROM checkpoints
 		WHERE agent_id = ? ORDER BY created_at, rowid`, agentID)
 	if err != nil {
-		return earlierProof{}, false, err
+		return nil, err
 	}
 	defer rows.Close()
-	var p earlierProof
-	var found, red bool
+	var endMs int64
+	reds := map[int]bool{}
+	proofs := map[int]earlierProof{}
 	for rows.Next() {
 		var at int64
 		var raw string
 		if err := rows.Scan(&at, &raw); err != nil {
-			return earlierProof{}, false, err
+			return nil, err
 		}
-		p.endMs = max(p.endMs, at)
+		endMs = max(endMs, at)
 		var vs []Verify
 		if err := json.Unmarshal([]byte(raw), &vs); err != nil {
-			return earlierProof{}, false, fmt.Errorf("checkpoints verify_json: %w", err)
+			return nil, fmt.Errorf("checkpoints verify_json: %w", err)
 		}
 		for _, v := range vs {
-			if found || v.Unit != unit {
+			if _, done := proofs[v.Unit]; done || v.Unit == 0 {
 				continue
 			}
 			switch {
 			case v.Phase == "red" && !v.OK:
-				red = true
-			case v.Phase == "green" && v.OK && red:
-				found, p.heads = true, v.Heads
+				reds[v.Unit] = true
+			case v.Phase == "green" && v.OK && reds[v.Unit] && len(v.Heads) > 0:
+				proofs[v.Unit] = earlierProof{heads: v.Heads}
 			}
 		}
 	}
-	if err := rows.Err(); err != nil || !found || len(p.heads) == 0 {
-		return earlierProof{}, false, err
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	var endedMs sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `SELECT MAX(ended_at) FROM sessions WHERE agent_id = ?`, agentID).Scan(&endedMs); err != nil {
-		return earlierProof{}, false, err
+		return nil, err
 	}
-	p.endMs = max(p.endMs, endedMs.Int64)
-	return p, true, nil
+	for u, p := range proofs {
+		p.endMs = max(endMs, endedMs.Int64)
+		proofs[u] = p
+	}
+	return proofs, nil
+}
+
+// sharesAnchor reports whether another unit of the same agent was anchored to
+// the very same worktree HEADs as unit: the commit after that HEAD cannot say
+// which of them it holds.
+func sharesAnchor(byUnit map[int]earlierProof, unit int) bool {
+	for u, p := range byUnit {
+		if u != unit && maps.Equal(p.heads, byUnit[unit].heads) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) git(ctx context.Context, path string, args ...string) (string, error) {
@@ -743,11 +763,11 @@ func (s *Store) unitCommitCarries(ctx context.Context, wts []rwWorktree, refs []
 			if n, perr := strconv.ParseInt(ct, 10, 64); err != nil || perr != nil || n > endSec {
 				continue
 			}
-			files, err := s.git(ctx, w.Path, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", c)
+			files, err := s.git(ctx, w.Path, "diff-tree", "-z", "--root", "--no-commit-id", "--name-only", "-r", c)
 			if err != nil {
 				continue
 			}
-			later, err := s.git(ctx, w.Path, append([]string{"log", "--format=%ct", c + ".." + g.SHA, "--"}, strings.Split(files, "\n")...)...)
+			later, err := s.git(ctx, w.Path, append([]string{"log", "--format=%ct", c + ".." + g.SHA, "--"}, strings.Split(strings.TrimRight(files, "\x00"), "\x00")...)...)
 			if err != nil {
 				continue
 			}
