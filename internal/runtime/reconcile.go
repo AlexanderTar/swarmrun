@@ -1799,6 +1799,10 @@ func (s *Store) ReconcileLoop(ctx context.Context, every time.Duration) {
 		case <-s.after(wait):
 		case <-s.kickChan():
 		}
+		// select picks at random among ready cases: a cancelled ctx must win over a tick that fired with it.
+		if ctx.Err() != nil {
+			return
+		}
 		start := s.now()
 		if err := s.Reconcile(ctx); err != nil {
 			s.logf("reconcile: %v", err)
