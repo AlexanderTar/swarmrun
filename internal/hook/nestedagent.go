@@ -22,10 +22,14 @@ import (
 // Known limits, shared with the regex it replaces: a command name that an
 // expansion produces (a variable's value, `cl*de`, `{claude,}`: an expansion
 // only counts as empty before a literal name), a name in another letter case
-// (`Claude`, which runs on a case-insensitive file system such as macOS), a
-// script fed on stdin by a pipe (`echo claude | sh`), the body of a heredoc to
-// anything but a shell, and wrappers or builtins that run a string it does not
-// know. It does read the strings of sh -c, su -c, env -S, eval and trap.
+// (`Claude`, which runs on a case-insensitive file system such as macOS), the
+// body of a heredoc to anything but a shell, and wrappers or builtins that run
+// a string it does not know. It does read the strings of sh -c, su -c, env -S,
+// eval and trap, and the text earlier stages of a pipeline print (a command's
+// arguments, `\n` read as a line break) when a later stage is a shell reading
+// stdin (no -c string and no script file, or -s): `echo claude | sh`. Text
+// that reaches a shell through anything but a pipe stage's arguments (a
+// `cat file | sh`, a `curl ... | sh`) is not known.
 func isClaudeCommand(cmd string) bool {
 	return newShellScan(cmd, 0).blocked()
 }
@@ -103,6 +107,11 @@ type shellScan struct {
 	pos       int
 	depth     int
 	shellSeen bool // a shell interpreter ran in command position
+
+	// pipe holds the text the earlier stages of the pipeline being read print
+	// (stageText); stage is the text of the command just judged.
+	pipe  []string
+	stage string
 }
 
 func newShellScan(s string, depth int) *shellScan {
@@ -124,6 +133,7 @@ func (p *shellScan) list(sub bool) bool {
 	inWord := false
 	parens := 0
 	var heredocs []heredoc
+	lastPipe := false // the last separator was a pipe (a newline may continue it)
 
 	flush := func() {
 		if inWord {
@@ -215,8 +225,12 @@ func (p *shellScan) list(sub bool) bool {
 			}
 		case c == '\n':
 			p.pos++
+			keep := lastPipe && len(words) == 0 && !inWord // `a |` continues on the next line
 			if end() {
 				return true
+			}
+			if !keep {
+				p.pipe, lastPipe = nil, false
 			}
 			for _, h := range heredocs {
 				body := p.heredocBody(h)
@@ -230,11 +244,25 @@ func (p *shellScan) list(sub bool) bool {
 				}
 			}
 			heredocs = nil
-		case c == ';' || c == '&' || c == '|':
+		case c == '|' && p.peek(1) != '|':
+			// A pipe (or |&): this stage's text is stdin for the next.
 			p.pos++
+			if p.peek(0) == '&' {
+				p.pos++
+			}
 			if end() {
 				return true
 			}
+			p.pipe, lastPipe = append(p.pipe, p.stage), true
+		case c == ';' || c == '&' || c == '|':
+			p.pos++
+			if c == '|' {
+				p.pos++ // ||
+			}
+			if end() {
+				return true
+			}
+			p.pipe, lastPipe = nil, false
 		case c == '(':
 			p.pos++
 			parens++
@@ -298,8 +326,12 @@ func (p *shellScan) list(sub bool) bool {
 // sub scans a $( ) or <( ) body (opener consumed) one level deeper.
 func (p *shellScan) sub() bool {
 	p.depth++
-	defer func() { p.depth-- }()
-	return p.list(true)
+	pipe := p.pipe
+	p.pipe = nil
+	hit := p.list(true)
+	p.pipe = pipe
+	p.depth--
+	return hit
 }
 
 func (p *shellScan) peek(n int) byte {
@@ -593,6 +625,7 @@ func (p *shellScan) checkWords(raw []string) bool {
 			words = append(words, raw[i])
 		}
 	}
+	p.stage = stageText(words)
 	if len(here) == 0 {
 		return p.checkCommand(words)
 	}
@@ -613,6 +646,46 @@ func (p *shellScan) checkWords(raw []string) bool {
 		}
 	}
 	return false
+}
+
+// stageText is what a command writes to the next stage of a pipeline, taken
+// to be its arguments past leading options (echo -e 'cmd'), space-joined.
+func stageText(words []string) string {
+	if len(words) == 0 {
+		return ""
+	}
+	i := 1
+	for i < len(words) && len(words[i]) > 1 && words[i][0] == '-' {
+		i++
+	}
+	// printf and echo -e turn a literal \n into a line break.
+	return strings.ReplaceAll(strings.Join(words[i:], " "), `\n`, "\n")
+}
+
+// shellReadsStdin reports whether a shell with these arguments reads its
+// script from stdin: no -c string and no script file, or -s.
+func shellReadsStdin(args []string) bool {
+	positional := false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return len(args[i+1:]) == 0
+		case a == "-o" || a == "+o" || a == "-O" || a == "+O" || a == "--rcfile" || a == "--init-file":
+			i++
+		case strings.HasPrefix(a, "--"):
+		case len(a) > 1 && (a[0] == '-' || a[0] == '+'):
+			if strings.Contains(a, "c") {
+				return false
+			}
+			if strings.Contains(a, "s") {
+				return true
+			}
+		default:
+			positional = true
+		}
+	}
+	return !positional
 }
 
 func (p *shellScan) checkCommand(words []string) bool {
@@ -668,7 +741,18 @@ func (p *shellScan) checkCommand(words []string) bool {
 		}
 		if shellNames[base] {
 			p.shellSeen = true
-			return p.checkShellArgs(words[i+1:])
+			if p.checkShellArgs(words[i+1:]) {
+				return true
+			}
+			// A shell reading stdin runs what the earlier stages print.
+			if shellReadsStdin(words[i+1:]) {
+				for _, text := range p.pipe {
+					if text != "" && newShellScan(text, p.depth+1).blocked() {
+						return true
+					}
+				}
+			}
+			return false
 		}
 		if base == "eval" {
 			p.shellSeen = true

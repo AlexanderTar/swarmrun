@@ -438,3 +438,57 @@ func TestIsClaudeCommandAllowsWrapperData(t *testing.T) {
 		}
 	}
 }
+
+// A shell that reads stdin runs what the earlier pipeline stages print, so
+// that text is code. A shell given -c or a script file reads no stdin script.
+func TestIsClaudeCommandBlocksTextPipedToShell(t *testing.T) {
+	for _, s := range []string{
+		"echo '(claude -p hi)' | sh",
+		"echo claude | sh",
+		"echo claude -p hi | bash",
+		"echo -e 'a\\nclaude -p hi' | zsh",
+		"printf 'x\\nclaude -p hi\\n' | sh",
+		"echo 'a\nclaude -p hi\nb' | sh",
+		"echo claude | sh -s",
+		"echo claude | sh -s -- arg",
+		"echo claude | bash -x",
+		"echo claude | tr a-z a-z | sh",
+		"echo claude |& sh",
+		"echo claude |\nsh",
+		"echo claude | (sh)",
+		"echo claude | { sh; }",
+		"echo ok; echo claude | dash",
+		"echo claude | ksh && true",
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (script piped to a shell)", s)
+		}
+	}
+}
+
+// Text piped to a command that is not a stdin shell, or to a shell that reads
+// a file or a -c string, is data; so is text a pipeline did not feed.
+func TestIsClaudeCommandAllowsTextNotPipedToShell(t *testing.T) {
+	for _, s := range []string{
+		"echo claude | grep claude",
+		"echo claude | cat",
+		"echo claude | wc -l",
+		"echo claude | sh script.sh",
+		"echo claude | sh -c 'cat'",
+		"echo claude | bash -- script.sh",
+		"echo claude; sh",
+		"echo claude && sh",
+		"echo claude || sh",
+		"echo claude |\ngrep x\nsh",
+		"echo claude\nsh",
+		"echo 'see the claude -p docs' | sh",
+		"echo 'run claude -p mid-line' | tee notes.md",
+		"echo 'a claude b' | sh -c 'wc -w'",
+		"x=$(echo claude | cat); sh",
+		"echo hi | sh",
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (data)", s)
+		}
+	}
+}
