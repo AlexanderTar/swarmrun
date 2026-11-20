@@ -326,6 +326,48 @@ func TestIsClaudeCommandAllowsRound2Data(t *testing.T) {
 	}
 }
 
+// An expansion glued to a quoted or escaped name: the quotes are gone when the
+// shell runs the word, and with the variable unset it runs claude. The scanner
+// must see the expansion before the text is decoded, so quoting survives.
+func TestIsClaudeCommandBlocksGluedExpansions(t *testing.T) {
+	for _, s := range []string{
+		`"$x"claude`,
+		`$x'claude'`,
+		`$x"claude"`,
+		`$x\claude`,
+		`"${x}"claude -p hi`,
+		`"${x:-$(true)}"claude`,
+		`${x:-'}'}claude`,
+		`$1 claude`,
+		`"$@"claude`,
+		`ls; "$x"/usr/bin/claude`,
+		`echo ${x:-$(claude)}`,
+		`echo "${x:-$(claude)}"`,
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (expansion glued to the name)", s)
+		}
+	}
+}
+
+// Text that only looks like an expansion is data: a single-quoted or escaped
+// $ is a literal character, so these words never reduce to the bare name.
+func TestIsClaudeCommandAllowsLiteralDollar(t *testing.T) {
+	for _, s := range []string{
+		`'$x'claude`,
+		`"\$x"claude`,
+		`\$xclaude`,
+		`'${x}'claude`,
+		`$ claude`,
+		`echo "$x"claude`,
+		`ls "$x"claude`,
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (literal $ is data)", s)
+		}
+	}
+}
+
 // The same wrappers around an ordinary command, and read-only lookups of the
 // agent's name, are not invocations.
 func TestIsClaudeCommandAllowsWrapperData(t *testing.T) {
