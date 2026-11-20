@@ -120,12 +120,14 @@ Two test-only bugs failed CI or hung the runtime suite. Both are timing-dependen
   - Production loops that select on `ctx.Done()` and a timer re-check `ctx.Err()` right after the select (`Store.ReconcileLoop` does), because a cancelled context and a fired tick are both ready and `select` chooses at random.
 - **Detect:** a plain `-count=50` run does not show either bug on a quiet Mac (socket I/O gives the race detector a happens-before edge, and the hang needs about seven random picks in a row). Both showed up only with a race-built test binary, few CPUs and busy ones:
   ```sh
-  go test -race -c -o /tmp/pkg.test ./internal/tunnel    # build once, run the binary from the package dir
+  out=<your scratch dir>                                   # not /tmp: keep test binaries in your own scratchpad
+  go test -race -c -o "$out/tunnel.test" ./internal/tunnel
+  go test -race -c -o "$out/runtime.test" ./internal/runtime
   for i in 1 2 3 4; do (while :; do :; done) & done      # CPU burners
-  cd internal/tunnel && GOMAXPROCS=2 /tmp/pkg.test -test.count=20000 -test.run TestClientResetsBackoffAfterAStableSession
-  # runtime: ... -test.count=3000 -test.timeout 550s -test.run TestReconcileLoopMeasuresThePeriodFromTheTickStart
+  (cd internal/tunnel && GOMAXPROCS=2 "$out/tunnel.test" -test.count=20000 -test.run TestClientResetsBackoffAfterAStableSession)
+  (cd internal/runtime && GOMAXPROCS=2 "$out/runtime.test" -test.count=3000 -test.timeout 550s -test.run TestReconcileLoopMeasuresThePeriodFromTheTickStart)
   kill $(jobs -p)                                         # stop the burners
   ```
   Unburdened repros that run in CI's budget: `go test -race -count=50 -run TestClientResetsBackoffAfterAStableSession ./internal/tunnel` and `go test -race -count=300 -timeout 300s -run TestReconcileLoopMeasuresThePeriodFromTheTickStart ./internal/runtime/`. Always pass `-count=N` (never the test cache) and a `-timeout` well below 30 m, so a hang is a quick failure.
-- **Trap:** a 30 m suite timeout hides which test hung: the failure is just `panic: test timed out`, and the first goroutine listed is the test runner. Read the dump for the line `running tests:` and for goroutines marked `chan send` or `chan receive` with minutes next to them; the test's own file and line (`reconcile_test.go:259`) is the stub that blocked. Rerunning the suite and getting a pass does not mean it was fixed.
+- **Trap:** a 30 m suite timeout hides which test hung: the failure is just `panic: test timed out`, and the first goroutine listed is the test runner. Read the dump for the line `running tests:` and for goroutines marked `chan send` or `chan receive` with minutes next to them; the test's own file and line (the `s.After` stub in `TestReconcileLoopMeasuresThePeriodFromTheTickStart`, `reconcile_test.go:259` on the base) is the stub that blocked. Rerunning the suite and getting a pass does not mean it was fixed.
 - **Check other tests before closing a similar bug:** `grep -rn "After = func\|\.After:" internal --include='*_test.go'` lists every fake-timer stub. The ones that return a never-fired channel (`make(chan time.Time)`), a one-shot buffered tick or a closed channel never block. The `internal/catalog/service_test.go` stubs send on an unbuffered `waiting` channel as a deliberate handshake with the test, which reads exactly as many as the loop sends: keep that count in step if you change what the loop does per tick.
