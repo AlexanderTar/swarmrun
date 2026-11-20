@@ -34,6 +34,10 @@ const maxShellDepth = 8
 
 var assignRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\[[^\]]*\])?\+?=`)
 
+// leadingExpansion matches the expansions at the start of a word: a marked
+// substitution or an unquoted $name, ${...} or special parameter.
+var leadingExpansion = regexp.MustCompile(`^(\x00|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?!$-])+`)
+
 // shellMarker stands in for text the scanner cannot know (an expansion) and
 // shellRedir marks a redirection operator, whose next word is a file name.
 const (
@@ -527,7 +531,18 @@ func (p *shellScan) checkCommand(words []string) bool {
 			i++
 			continue
 		}
+		if w == "function" {
+			// function NAME [()] { body }: NAME is not a command.
+			i += 2
+			continue
+		}
 		if assignRe.MatchString(w) || reservedWords[w] {
+			i++
+			continue
+		}
+		// An expansion that can be empty ($(true), $VAR) before the name
+		// vanishes at run time, so `$(true) claude` runs claude.
+		if w = leadingExpansion.ReplaceAllString(w, ""); w == "" {
 			i++
 			continue
 		}
@@ -645,7 +660,7 @@ func skipWrapperOptions(words []string, i int, argOpts map[string]bool, assigns 
 			return i + 1
 		case strings.HasPrefix(w, "-") && (w != "-" || assigns): // env - is env -i
 			i++
-			if argOpts[w] {
+			if argOpts[w] || clusterTakesNext(w, argOpts) {
 				i++
 			}
 		case assigns && assignRe.MatchString(w):
@@ -655,6 +670,21 @@ func skipWrapperOptions(words []string, i int, argOpts map[string]bool, assigns 
 		}
 	}
 	return i
+}
+
+// clusterTakesNext reports whether a short-option cluster such as -iu ends in
+// an option that takes an argument, so the argument is the next word. An
+// argument-taking letter earlier in the cluster takes the rest of it (-uroot).
+func clusterTakesNext(w string, argOpts map[string]bool) bool {
+	if len(w) < 3 || w[1] == '-' {
+		return false
+	}
+	for j := 1; j < len(w); j++ {
+		if argOpts["-"+w[j:j+1]] {
+			return j == len(w)-1
+		}
+	}
+	return false
 }
 
 // checkShellArgs checks the script string of `sh -c <script>`. A script

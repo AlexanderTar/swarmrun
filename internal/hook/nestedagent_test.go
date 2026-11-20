@@ -281,6 +281,51 @@ func TestIsClaudeCommandAllowsReviewData(t *testing.T) {
 	}
 }
 
+// Review round 2: an expansion that can be empty before the command name does
+// not hide it, a function body is code, and a short-option cluster ending in
+// an option that takes an argument consumes the next word.
+func TestIsClaudeCommandBlocksRound2Gaps(t *testing.T) {
+	for _, s := range []string{
+		`$(true) claude -p hi`,
+		"`true` claude",
+		`$(:)claude`,
+		`x=1 $(true) claude`,
+		`eval $(echo) claude`,
+		"bash <<EOF\n$(echo) claude\nEOF",
+		`$EMPTY claude`,
+		`${EMPTY:-} claude`,
+		`$EMPTY/usr/bin/claude`,
+		`sudo $(true) claude`,
+		`function f { claude; }; f`,
+		`function f() { claude; }`,
+		`function f { claude -p x; }`,
+		`sudo -iu root claude`,
+		`sudo -Eu root claude`,
+		`env -iu X claude`,
+		`sudo -u root claude`,
+	} {
+		if !isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = false, want true (real invocation)", s)
+		}
+	}
+}
+
+func TestIsClaudeCommandAllowsRound2Data(t *testing.T) {
+	for _, s := range []string{
+		`$(which grep) -n x claude`,
+		`function claude_notes { grep claude f; }`,
+		`function f { echo claude; }`,
+		`sudo -iu claude ls`,
+		`sudo -uroot ls claude`,
+		`env -iu claude ls`,
+		`$EDITOR claude.md`,
+	} {
+		if isClaudeCommand(s) {
+			t.Errorf("isClaudeCommand(%q) = true, want false (data)", s)
+		}
+	}
+}
+
 // The same wrappers around an ordinary command, and read-only lookups of the
 // agent's name, are not invocations.
 func TestIsClaudeCommandAllowsWrapperData(t *testing.T) {
