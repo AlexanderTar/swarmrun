@@ -32,16 +32,18 @@ export function mockDaemon(): Plugin {
       if (process.env.SWARM_MOCK !== "1") return;
       let current: Promise<MockDaemon> | undefined;
       let remote = false;
+      // The default seed stays small so the existing e2e suite measures layout, not lane
+      // count. Only the board-paging spec opts into the large seed via /__mock/reset?n=100
+      // (108 total top-level items, 4 pages of 30/30/30/18); unit tests opt in via seedPaged()
+      // explicitly (default 40, 2 pages).
+      let seedCount = 0;
       const daemon = () => {
-        // The serve daemon seeds 100 generated roots (108 total, 4 pages) so dev and
-        // Playwright exercise multi-page chaining; unit tests opt in via seedPaged() explicitly
-        // (default 40, 2 pages).
         current ??= Promise.all([
           server.ssrLoadModule("/src/mock/daemon.ts"),
           server.ssrLoadModule("/src/mock/fixtures.ts"),
         ]).then(([dm, fx]) =>
           (dm.createMockDaemon as (db?: MockDb) => MockDaemon)(
-            (fx.seedPaged as (n?: number) => MockDb)(100),
+            seedCount > 0 ? (fx.seedPaged as (n?: number) => MockDb)(seedCount) : undefined,
           ),
         );
         return current;
@@ -51,7 +53,9 @@ export function mockDaemon(): Plugin {
         async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
           const url = req.url ?? "";
           if (!url.startsWith("/api/") && !url.startsWith("/__mock/")) return next();
-          if (url === "/__mock/reset") {
+          if (url.startsWith("/__mock/reset")) {
+            const n = Number(new URL(url, "http://mock.test").searchParams.get("n"));
+            seedCount = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
             current = undefined;
             await daemon();
             return void res.end("ok");

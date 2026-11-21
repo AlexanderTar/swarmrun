@@ -37,7 +37,9 @@ export function BoardSentinel(p: {
   // trigger; a fresh false report loads nothing. Keyed on the true→false transition only, so
   // the mount render and repeats while visible never fire here — the observer owns those. A
   // fresh mount after an SSE-created page is covered by the observer's first report, so hasMore
-  // needs no dep here.
+  // needs no dep here. This fires for range refetches too (an SSE/mutation refetch of the loaded
+  // range also settles loadingMore): with the sentinel inside the margin that loads the next
+  // page, which is acceptable because the user is sitting near the end.
   const prevLoading = useRef(p.loadingMore);
   useEffect(() => {
     const was = prevLoading.current;

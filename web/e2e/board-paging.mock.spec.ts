@@ -15,8 +15,26 @@ function countCursorRequests(page: Page, counter: { n: number }) {
 }
 
 test.beforeEach(async ({ request }) => {
-  await request.get("/__mock/reset");
+  // The large seed (100 generated roots, 108 top-level items, 4 pages) lives only in this spec
+  // via the mock-only ?n= switch; every other e2e file resets to the small default seed.
+  await request.get("/__mock/reset?n=100");
 });
+
+// A stale settle re-check would fire its chained request right after the rows land, so every
+// cursor count below waits out a settle window first: the count is read only after it has held
+// still for ~2s, which the old settle-on-visible logic (BoardSentinel at 27b7ec15) fails.
+async function settledCursors(page: Page, counter: { n: number }, expected: number) {
+  await expect
+    .poll(
+      async () => {
+        const seen = counter.n;
+        await page.waitForTimeout(2000);
+        return counter.n === seen ? seen : -1;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(expected);
+}
 
 test("board loads 30 roots first, each scroll loads exactly one more page", async ({ page }) => {
   const cursors = { n: 0 };
@@ -27,14 +45,14 @@ test("board loads 30 roots first, each scroll loads exactly one more page", asyn
   await expect(page.getByRole("treeitem", { name: /^EPIC-30 / })).toHaveCount(0);
   await page.getByTestId("view").evaluate((el) => el.scrollTo(0, el.scrollHeight));
   await expect(topRows(page)).toHaveCount(60);
-  expect(cursors.n).toBe(1);
+  await settledCursors(page, cursors, 1);
   await expect(page.getByRole("treeitem", { name: /^EPIC-30 / })).toHaveCount(0);
   await page.getByTestId("view").evaluate((el) => el.scrollTo(0, el.scrollHeight));
   await expect(topRows(page)).toHaveCount(90);
-  expect(cursors.n).toBe(2);
+  await settledCursors(page, cursors, 2);
   await page.getByTestId("view").evaluate((el) => el.scrollTo(0, el.scrollHeight));
   await expect(topRows(page)).toHaveCount(108);
-  expect(cursors.n).toBe(3);
+  await settledCursors(page, cursors, 3);
   await expect(page.getByRole("treeitem", { name: /^EPIC-30 / })).toBeVisible();
   // Nothing extra at the end once every page is loaded.
   await expect(page.getByTestId("board-sentinel")).toHaveCount(0);
@@ -89,29 +107,29 @@ test("kanban loads one more page per scroll from its own scroller, never chainin
   await page.goto("/#/kanban?level=tasks&group=root");
   await expect(page.getByTestId("board-sentinel")).toHaveCount(1);
   // The observer root is Kanban's own scroller, not App's section: scrolling the lane scroller
-  // loads one page. Generated roots hold no tasks, so intermediate pages add no lanes here —
-  // the cursor count is what proves exactly one page per scroll (a stale settle re-check would
-  // fire a second request while the sentinel sits below the viewport).
+  // loads one page. Every generated root holds a task, so each page also adds lanes here; the
+  // settled cursor count is what proves exactly one page per scroll (a stale settle re-check
+  // would fire a second request while the sentinel sits below the viewport).
   await expect(page.getByTestId("lane-EPIC-30")).toHaveCount(0);
   const first = cursorResponse();
   await kanbanScroller(page).evaluate((el) => el.scrollTo(0, el.scrollHeight));
   release();
   await first;
   await expect(page.getByTestId("lane-EPIC-30")).toHaveCount(0);
-  expect(cursors.n).toBe(1);
+  await settledCursors(page, cursors, 1);
   // The sentinel stays mounted while pages remain, but settling the append must not chain.
   await expect(page.getByTestId("board-sentinel")).toHaveCount(1);
   const second = cursorResponse();
   await kanbanScroller(page).evaluate((el) => el.scrollTo(0, el.scrollHeight));
   await second;
-  expect(cursors.n).toBe(2);
+  await settledCursors(page, cursors, 2);
   await expect(page.getByTestId("lane-EPIC-30")).toHaveCount(0);
   const third = cursorResponse();
   await kanbanScroller(page).evaluate((el) => el.scrollTo(0, el.scrollHeight));
   await third;
   await expect(page.getByTestId("lane-EPIC-30")).toBeVisible();
   await expect(page.getByTestId("board-sentinel")).toHaveCount(0);
-  expect(cursors.n).toBe(3);
+  await settledCursors(page, cursors, 3);
   await noHorizontalOverflow(page);
 });
 

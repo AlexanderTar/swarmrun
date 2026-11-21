@@ -3,11 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { useItems } from "../data/queries";
+import { makeItem } from "../logic/tree";
 import { createMockDaemon } from "../mock/daemon";
 import { seed } from "../mock/fixtures";
 import { clickNode, renderWithDaemon } from "../test/render";
 import { pickOption } from "../test/select";
-import type { Filter } from "../types";
+import type { Filter, Item } from "../types";
 import { Dependencies } from "./Dependencies";
 
 const none: Filter = { q: "", type: "", status: "" };
@@ -172,6 +173,46 @@ describe("Dependencies view (§16.8)", () => {
     expect(screen.getByTestId("node-BUG-7")).toBeInTheDocument();
     expect(screen.queryByText("No dependencies for this item.")).not.toBeInTheDocument();
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("does not move the automatic selection when a later page arrives", async () => {
+    // A later page can land a root with dependency edges while the user still hasn't chosen;
+    // the automatic first-root pick stays put instead of switching under them.
+    const lonely = makeItem({ key: "EPIC-900", title: "Lonely", status: "ready" });
+    const edgeful = makeItem({ key: "EPIC-901", title: "Edgeful", status: "ready" });
+    const waiter = makeItem({
+      key: "TASK-902",
+      title: "Waits",
+      status: "blocked",
+      parent_key: "EPIC-901",
+      root_key: "EPIC-901",
+      blocked_by: ["TASK-903"],
+    });
+    const onSelect = vi.fn();
+    function Picking(p: { items: Item[] }) {
+      const [sel, setSel] = useState("");
+      return (
+        <Dependencies
+          items={p.items}
+          loaded
+          filter={none}
+          selected={sel}
+          connected
+          onSelect={(k) => {
+            onSelect(k);
+            setSel(k);
+          }}
+          paging={stubPaging()}
+        />
+      );
+    }
+    const r = renderWithDaemon(<Picking items={[lonely]} />, { events: false });
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("EPIC-900"));
+    r.rerender(<Picking items={[lonely, edgeful, waiter]} />);
+    await act(async () => {
+      await new Promise((res) => setTimeout(res, 100));
+    });
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it("does not re-select a root after the selection is closed, and keeps the graph", async () => {
