@@ -255,4 +255,56 @@ describe("useBoardItems", () => {
     expect(screen.getByTestId("err")).toHaveTextContent("");
     vi.unstubAllGlobals();
   });
+
+  it("range refetch past the server's 1000-root clamp follows next_cursor and keeps every root", async () => {
+    const all = roots(1500);
+    const calls: string[] = [];
+    const fn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://test");
+      if (url.pathname === "/api/auth/me")
+        return Response.json({ origin: "local", authenticated: true });
+      if (url.pathname === "/api/bootstrap") return Response.json({ token: "t" });
+      calls.push(url.pathname + url.search);
+      // The daemon clamps limit to [1, 1000] (internal/items/board.go boardMaxLimit).
+      const limit = Math.min(Number(url.searchParams.get("limit") ?? 30), 1000);
+      const cursor = url.searchParams.get("cursor") ?? "";
+      const start = cursor === "" ? 0 : Number(cursor);
+      return Response.json({
+        items: all.slice(start, start + limit),
+        matches: all.length,
+        roots_total: all.length,
+        next_cursor: start + limit < all.length ? String(start + limit) : "",
+      });
+    });
+    vi.stubGlobal("fetch", fn as unknown as typeof fetch);
+    const api = createApi();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <DataProvider api={api} events={false}>
+        {children}
+      </DataProvider>
+    );
+    const { result } = renderHook(
+      () => ({ board: useBoardItems({ q: "", type: "", status: "" }), inv: useInvalidate() }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.board.loaded).toBe(true));
+    for (let n = 30; n < 1500; n += 30) {
+      act(() => result.current.board.loadMore());
+      await waitFor(() => expect(result.current.board.rootCount).toBe(n + 30));
+    }
+    expect(result.current.board.nextCursor).toBe("");
+    const before = calls.length;
+    act(() => result.current.inv(["items"]));
+    await waitFor(() => expect(calls.length).toBeGreaterThan(before));
+    await waitFor(() => expect(result.current.board.loadingMore).toBe(false));
+    // Nothing past the clamp is dropped.
+    expect(result.current.board.rootCount).toBe(1500);
+    expect(new Set(result.current.board.items.map((i) => i.id)).size).toBe(1500);
+    expect(result.current.board.nextCursor).toBe("");
+    expect(calls.slice(before)).toEqual([
+      "/api/items?view=board&limit=1000",
+      "/api/items?view=board&limit=500&cursor=1000",
+    ]);
+    vi.unstubAllGlobals();
+  });
 });

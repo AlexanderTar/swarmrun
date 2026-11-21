@@ -32,6 +32,8 @@ export interface BoardResult extends BoardData {
 }
 
 export const BOARD_PAGE = 30;
+/** The daemon clamps a board request's limit to this (internal/items/board.go boardMaxLimit). */
+const BOARD_MAX_LIMIT = 1000;
 
 const countRoots = (items: Item[]) => items.filter((i) => i.parent_key === null).length;
 
@@ -54,7 +56,7 @@ function toBoard(res: BoardItemsResponse, prev?: BoardData): BoardData {
 
 /**
  * Paged board items (GET /api/items?view=board). Loads the first page only, appends one page
- * per loadMore() while next_cursor is set, and refetches the whole loaded range in one request
+ * per loadMore() while next_cursor is set, and refetches the whole loaded range (one request, or chunks of 1000 past the server clamp)
  * (limit = loaded root count, from the start) whenever the store invalidates the key — SSE item
  * events, reconnect `open` and mutations all invalidate the "items" prefix this key lives under.
  * Loaded pages are kept across refetches (never a snap back to page 1) and items de-dupe by id.
@@ -99,8 +101,20 @@ export function useBoardItems(f: BoardFilter): BoardResult {
       }
     }
     const loaded = (store.get(key)?.data as BoardData | undefined)?.rootCount ?? 0;
-    const res = await api.boardItems({ ...params, limit: Math.max(loaded, BOARD_PAGE) });
-    return toBoard(res);
+    const want = Math.max(loaded, BOARD_PAGE);
+    // The server clamps limit to BOARD_MAX_LIMIT, so a larger loaded range is fetched in chunks
+    // that follow next_cursor; the data is replaced once, from the combined result.
+    let res = await api.boardItems({ ...params, limit: Math.min(want, BOARD_MAX_LIMIT) });
+    let board = toBoard(res);
+    while (board.rootCount < want && res.next_cursor !== "") {
+      res = await api.boardItems({
+        ...params,
+        cursor: res.next_cursor,
+        limit: Math.min(want - board.rootCount, BOARD_MAX_LIMIT),
+      });
+      board = toBoard(res, board);
+    }
+    return board;
   };
   const subscribe = useCallback((fn: () => void) => store.subscribe(key, fn), [store, key]);
   const entry = useSyncExternalStore(subscribe, () => store.get(key));
