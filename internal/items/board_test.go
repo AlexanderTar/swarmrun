@@ -314,3 +314,29 @@ func TestBoardInsertBetweenPages(t *testing.T) {
 		t.Fatalf("refetch roots_total = %d, want 36", fresh.RootsTotal)
 	}
 }
+
+// Board q folds case like the web client's toLowerCase, not just ASCII like
+// SQLite's LOWER: 'über' finds 'Über' and 'ÉCOLE' finds 'école' (key/title).
+func TestBoardQFoldsUnicodeCase(t *testing.T) {
+	s := newStore(t)
+	mk(t, s, items.Epic, "", "Über alles")
+	mk(t, s, items.Epic, "", "école primaire")
+	mk(t, s, items.Epic, "", "Plain")
+	for _, c := range []struct {
+		q    string
+		want []string
+	}{
+		{"über", []string{"EPIC-1"}},
+		{"ÜBER", []string{"EPIC-1"}},
+		{"École", []string{"EPIC-2"}},
+		{"ÉCOLE", []string{"EPIC-2"}},
+	} {
+		p, err := s.ListBoard(ctx, items.BoardFilter{Q: c.q})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := boardRoots(p); !slices.Equal(got, c.want) {
+			t.Errorf("q=%q roots = %v, want %v", c.q, got, c.want)
+		}
+	}
+}

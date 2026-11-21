@@ -5,16 +5,40 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"database/sql/driver"
 	"embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
+	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
+
+// LowerFunc is the SQL name of the Unicode-aware lower-casing function. SQLite's
+// built-in LOWER folds ASCII only, while the web board's filter uses JavaScript's
+// toLowerCase; queries that must match it fold with LowerFunc(x) instead.
+const LowerFunc = "swarm_lower"
+
+func init() {
+	// Registered before any connection opens, so every pooled connection has it.
+	err := sqlite.RegisterDeterministicScalarFunction(LowerFunc, 1,
+		func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			switch v := args[0].(type) {
+			case string:
+				return strings.ToLower(v), nil
+			case []byte:
+				return strings.ToLower(string(v)), nil
+			}
+			return args[0], nil // NULL and numbers pass through
+		})
+	if err != nil {
+		panic(err)
+	}
+}
 
 const SchemaVersion = 36
 

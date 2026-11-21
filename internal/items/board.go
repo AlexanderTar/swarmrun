@@ -84,7 +84,7 @@ func boardPreds(alias string, f BoardFilter, args *[]any) []string {
 	if q := strings.TrimSpace(f.Q); q != "" {
 		// Trimmed like the board client's filter before matching.
 		pat := "%" + escapeLike(strings.ToLower(q)) + "%"
-		where = append(where, "(LOWER("+alias+".key) LIKE ? ESCAPE '\\' OR LOWER("+alias+".title) LIKE ? ESCAPE '\\')")
+		where = append(where, "("+db.LowerFunc+"("+alias+".key) LIKE ? ESCAPE '\\' OR "+db.LowerFunc+"("+alias+".title) LIKE ? ESCAPE '\\')")
 		*args = append(*args, pat, pat)
 	}
 	return where

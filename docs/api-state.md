@@ -50,13 +50,19 @@ Expect well under 1 MB and a few seconds. Count nodes with `... | jq '[.agents |
   following it never repeats or skips a pre-existing tree. A root created
   ahead of the cursor (the usual case: a new root is the newest in its
   priority group, so it sorts first) appears only on a refetch from the
-  start — the client refetches its loaded range in one request with
-  `limit` set to the loaded count. `next_cursor` is `""` on the last page.
+  start — the client refetches its loaded range with `limit` set to the
+  loaded count, in chunks of 1000 (the server clamp) that follow
+  `next_cursor` once more than 1000 roots are loaded. `next_cursor` is `""` on the last page.
   A bad cursor or a non-numeric limit is a 400 `bad_request` with a plain
   message.
 - Filters (`q`, `type`, `status`) select whole trees: a root's tree is
   included when any item in it matches. Board `q` is the board's
   case-insensitive substring on key or title, NOT the tree view's FTS query.
+  Case folds with full Unicode lower-casing (`swarm_lower`, a Go function
+  registered in `internal/db`, like the client's `toLowerCase`), so `über`
+  finds `Über`; SQLite's built-in `LOWER` is ASCII-only and isn't used. Go's
+  `ToLower` and JS `toLowerCase` differ only on context-dependent cases such
+  as a word-final Greek sigma.
   `type` also accepts `chore` here. The response is
   `{items, matches, roots_total, next_cursor}`: `matches` counts matching
   items across all trees (every non-archived item when unfiltered),
