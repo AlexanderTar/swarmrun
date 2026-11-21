@@ -130,6 +130,25 @@ export interface ItemsResponse {
   matches: number;
 }
 
+// GET /api/items?view=board (docs/api-state.md): at most `limit` top-level
+// trees per page, each with its whole subtree. `matches` counts matching items
+// across all trees, `roots_total` counts the trees across all pages,
+// `next_cursor` is "" on the last page.
+export interface BoardItemsResponse {
+  items: Item[];
+  matches: number;
+  roots_total: number;
+  next_cursor: string;
+}
+
+export interface BoardItemsParams {
+  q?: string;
+  type?: string;
+  status?: string;
+  cursor?: string;
+  limit?: number;
+}
+
 export type TodoStatus = "pending" | "in_progress" | "completed";
 export interface Todo {
   id: string;

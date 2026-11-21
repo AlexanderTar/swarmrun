@@ -312,6 +312,36 @@ describe("createApi auth modes", () => {
   });
 });
 
+describe("boardItems", () => {
+  const page = { items: [], matches: 0, roots_total: 0, next_cursor: "" };
+  it("requests view=board with limit=30 by default", async () => {
+    const f = fakeFetch({
+      ...localMe,
+      "GET /api/bootstrap": () => json({ token: "t" }),
+      "GET /api/items?view=board&limit=30": () => json(page),
+    });
+    await expect(createApi({ fetchFn: f.fn }).boardItems()).resolves.toEqual(page);
+  });
+
+  it("passes q/type/status/cursor/limit through", async () => {
+    const f = fakeFetch({
+      ...localMe,
+      "GET /api/bootstrap": () => json({ token: "t" }),
+      "GET /api/items?view=board&limit=10&q=EPIC-1&type=epic&status=ready&cursor=abc": () =>
+        json(page),
+    });
+    await expect(
+      createApi({ fetchFn: f.fn }).boardItems({
+        q: "EPIC-1",
+        type: "epic",
+        status: "ready",
+        cursor: "abc",
+        limit: 10,
+      }),
+    ).resolves.toEqual(page);
+  });
+});
+
 describe("errorText", () => {
   it("prefers the transition reason, then the message", () => {
     expect(

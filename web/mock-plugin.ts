@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import type { MockDaemon, StreamSignal } from "./src/mock/daemon";
+import type { MockDb } from "./src/mock/fixtures";
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -32,9 +33,16 @@ export function mockDaemon(): Plugin {
       let current: Promise<MockDaemon> | undefined;
       let remote = false;
       const daemon = () => {
-        current ??= server
-          .ssrLoadModule("/src/mock/daemon.ts")
-          .then((m) => (m.createMockDaemon as () => MockDaemon)());
+        // The serve daemon seeds the paged fixtures (>30 roots) so dev and Playwright
+        // exercise board paging; unit tests opt in via seedPaged() explicitly.
+        current ??= Promise.all([
+          server.ssrLoadModule("/src/mock/daemon.ts"),
+          server.ssrLoadModule("/src/mock/fixtures.ts"),
+        ]).then(([dm, fx]) =>
+          (dm.createMockDaemon as (db?: MockDb) => MockDaemon)(
+            (fx.seedPaged as (n?: number) => MockDb)(),
+          ),
+        );
         return current;
       };
 

@@ -818,3 +818,23 @@ export function seed(): MockDb {
     repos: repos(),
   };
 }
+
+// Paging fixtures: the default seed stays small for the existing view tests; this variant adds
+// generated roots to take the forest past 30 top-level items so board paging (view=board) is
+// exercised by the paging unit tests, the mock serve daemon (dev/Playwright) and the e2e suite.
+// Priority cycles so the page order is deterministic; created_at stays older than every
+// hand-written root except EPIC-30, whose done tree sorts last by priority anyway.
+export function seedPaged(n = 40): MockDb {
+  const db = seed();
+  for (let i = 0; i < n; i++)
+    db.items.push(
+      makeItem({
+        key: `EPIC-${100 + i}`,
+        title: `Generated epic ${100 + i}`,
+        status: "ready",
+        priority: (i % 4) as 0 | 1 | 2 | 3,
+        created_at: NOW - (4000 + i) * MIN,
+      }),
+    );
+  return db;
+}

@@ -7,6 +7,8 @@ import type {
   ApiErrorCode,
   ApproveBody,
   ArtifactResponse,
+  BoardItemsParams,
+  BoardItemsResponse,
   Checkpoint,
   ConfirmReposBody,
   CreateItemBody,
@@ -179,6 +181,11 @@ export function createApi({
     login: (email: string, password: string) => post("/api/auth/login", { email, password }),
     logout: () => post("/api/auth/logout"),
     items: () => call<ItemsResponse>("GET", "/api/items?view=flat"),
+    boardItems: (p: BoardItemsParams = {}) =>
+      call<BoardItemsResponse>(
+        "GET",
+        `/api/items${query({ view: "board", limit: p.limit ?? 30, q: p.q, type: p.type, status: p.status, cursor: p.cursor })}`,
+      ),
     item: (key: string) => call<ItemDetail>("GET", `/api/items/${enc(key)}`),
     createItem: (b: CreateItemBody) => call<Item>("POST", "/api/items", b),
     patchItem: (key: string, b: PatchItemBody) => call<Item>("PATCH", `/api/items/${enc(key)}`, b),

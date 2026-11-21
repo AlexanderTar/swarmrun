@@ -1,7 +1,13 @@
 import { C } from "../copy";
 import { kebab } from "../logic/kebab";
 import { checkMove } from "../logic/transitions";
-import { PARENT_TYPES, ancestors, buildIndex, makeItem } from "../logic/tree";
+import {
+  PARENT_TYPES,
+  ancestors,
+  buildIndex,
+  compareTopLevel,
+  makeItem,
+} from "../logic/tree";
 import type { AgentEndpoint, AgentNode, Graph, Item, ItemType, Request } from "../types";
 import { type MockDb, NOW, seed } from "./fixtures";
 
@@ -615,9 +621,88 @@ export function createMockDaemon(db: MockDb = seed()): MockDaemon {
     return ok(repo, 201); // contracts D-12: POST /api/repos is 201
   }
 
+  // GET /api/items?view=board (docs/api-state.md): paged top-level trees mirroring
+  // internal/items/board.go — order, keyset cursor, filters and totals alike.
+  const BOARD_TYPES = ["epic", "story", "task", "bug", "spike", "chore"];
+  const BOARD_STATUSES = [
+    "draft",
+    "ready",
+    "in_progress",
+    "blocked",
+    "in_review",
+    "awaiting_approval",
+    "done",
+    "cancelled",
+  ];
+  const encCursor = (it: Item) =>
+    btoa(JSON.stringify({ p: it.priority, c: it.created_at, id: it.id }));
+  const decCursor = (cur: string): { p: number; c: number; id: string } | null => {
+    try {
+      const c = JSON.parse(atob(cur)) as { p: number; c: number; id: string };
+      return typeof c.id === "string" && c.id !== "" ? c : null;
+    } catch {
+      return null;
+    }
+  };
+  function listBoard(q: URLSearchParams): MockResponse {
+    const type = q.get("type") ?? "";
+    if (type && !BOARD_TYPES.includes(type))
+      return fail(400, "bad_request", `Unknown item type "${type}".`);
+    const status = q.get("status") ?? "";
+    if (status && !BOARD_STATUSES.includes(status))
+      return fail(400, "bad_request", `Unknown status "${status}".`);
+    let limit = 30;
+    const ls = q.get("limit") ?? "";
+    if (ls !== "") {
+      const n = Number(ls);
+      if (!Number.isInteger(n)) return fail(400, "bad_request", "limit must be a number.");
+      limit = Math.min(Math.max(n, 1), 1000);
+    }
+    const needle = (q.get("q") ?? "").trim().toLowerCase();
+    const hit = (i: Item) =>
+      (type === "" || i.type === type) &&
+      (status === "" || i.status === status) &&
+      (needle === "" ||
+        i.key.toLowerCase().includes(needle) ||
+        i.title.toLowerCase().includes(needle));
+    const live = db.items.filter((i) => i.archived_at === null);
+    const roots = live
+      .filter((i) => i.parent_key === null)
+      .sort(compareTopLevel)
+      .filter((r) => live.some((i) => i.root_key === r.key && hit(i)));
+    const matches = live.filter(
+      (i) => hit(i) && roots.some((r) => r.key === i.root_key),
+    ).length;
+    let page = roots;
+    const cursor = q.get("cursor") ?? "";
+    if (cursor !== "") {
+      const c = decCursor(cursor);
+      if (!c) return fail(400, "bad_request", "cursor is invalid.");
+      page = page.filter(
+        (r) =>
+          r.priority > c.p ||
+          (r.priority === c.p && r.created_at < c.c) ||
+          (r.priority === c.p && r.created_at === c.c && r.id > c.id),
+      );
+    }
+    const slice = page.slice(0, limit);
+    const next = page.length > limit ? encCursor(slice[limit - 1]) : "";
+    const keys = new Set(slice.map((r) => r.key));
+    // Orphans are dropped, like the daemon's assembleTree.
+    const items = live.filter((i) => keys.has(i.root_key));
+    return ok({ items, matches, roots_total: roots.length, next_cursor: next });
+  }
+
   const K = "(?<key>[^/?]+)";
   const routes: Route[] = [
-    ["GET", /^\/api\/items$/, () => ok({ items: db.items, matches: db.items.length })],
+    [
+      "GET",
+      /^\/api\/items$/,
+      (c) =>
+        c.q.get("view") === "board"
+          ? listBoard(c.q)
+          : ok({ items: db.items, matches: db.items.length }),
+    ],
     ["POST", /^\/api\/items$/, (c) => createItem(c.body)],
     ["GET", new RegExp(`^/api/items/${K}$`), (c) => detail(c.p.key as string)],
     ["PATCH", new RegExp(`^/api/items/${K}$`), (c) => patch(c.p.key as string, c.body)],

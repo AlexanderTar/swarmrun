@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentNode, Graph, Item, ItemDetail, Request } from "../types";
 import { createMockDaemon } from "./daemon";
 import { mockFetch } from "./fetch";
+import { seedPaged } from "./fixtures";
 
 const auth = { authorization: "Bearer mock-token" };
 const call = (
@@ -502,6 +503,72 @@ describe("mock daemon", () => {
       body: { error: { code: "internal", message: "x" } },
     });
     expect(call(d, "GET", "/api/settings").status).toBe(500);
+  });
+
+  it("seeds more than 30 top-level items so paging is exercised", () => {
+    const d = createMockDaemon(seedPaged());
+    expect(d.db.items.filter((i) => i.parent_key === null).length).toBeGreaterThan(30);
+  });
+
+  it("pages view=board with cursor, filters and totals like the daemon", () => {
+    const d = createMockDaemon(seedPaged());
+    type Page = {
+      items: Item[];
+      matches: number;
+      roots_total: number;
+      next_cursor: string;
+    };
+    // The daemon drops orphans (assembleTree) and excludes them from matches: only items
+    // whose root exists ride along.
+    const live = d.db.items.filter((i) =>
+      d.db.items.some((r) => r.key === i.root_key && r.parent_key === null),
+    );
+    const first = call(d, "GET", "/api/items?view=board&limit=30").body as Page;
+    expect(first.items.filter((i) => i.parent_key === null)).toHaveLength(30);
+    // Whole subtrees ride along: EPIC-12's children are on the first page with it.
+    expect(first.items.some((i) => i.key === "TASK-101")).toBe(true);
+    expect(first.matches).toBe(live.length);
+    expect(first.roots_total).toBeGreaterThan(30);
+    expect(first.next_cursor).not.toBe("");
+    const second = call(
+      d,
+      "GET",
+      `/api/items?view=board&limit=30&cursor=${encodeURIComponent(first.next_cursor)}`,
+    ).body as Page;
+    expect(second.next_cursor).toBe("");
+    const firstRoots = new Set(first.items.filter((i) => i.parent_key === null).map((i) => i.key));
+    for (const i of second.items.filter((x) => x.parent_key === null))
+      expect(firstRoots.has(i.key)).toBe(false);
+    expect(first.items.length + second.items.length).toBe(live.length);
+    // A bad cursor is a 400 like the daemon's listBoard.
+    expect(call(d, "GET", "/api/items?view=board&cursor=!!!")).toMatchObject({ status: 400 });
+  });
+
+  it("filters view=board trees server-side (q/type/status)", () => {
+    const d = createMockDaemon(seedPaged());
+    type Page = {
+      items: Item[];
+      matches: number;
+      roots_total: number;
+      next_cursor: string;
+    };
+    const q = call(d, "GET", "/api/items?view=board&q=login").body as Page;
+    // EPIC-12's tree matches ("Login crash" title / BUG-7 key); every returned tree holds a match.
+    const keys = new Set(q.items.map((i) => i.key));
+    expect(keys.has("EPIC-12")).toBe(true);
+    expect(q.matches).toBeGreaterThan(0);
+    expect(q.roots_total).toBeLessThan(d.db.items.filter((i) => i.parent_key === null).length);
+    const typed = call(d, "GET", "/api/items?view=board&type=bug&limit=1000").body as Page;
+    expect(typed.roots_total).toBeGreaterThan(0);
+    expect(
+      typed.items.every((i) => {
+        const root = typed.items.find((r) => r.key === i.root_key);
+        return root?.type === "bug" || i.root_key !== i.key;
+      }),
+    ).toBe(true);
+    const st = call(d, "GET", "/api/items?view=board&status=done&limit=1000").body as Page;
+    expect(st.roots_total).toBeGreaterThan(0);
+    expect(st.items.some((i) => i.status === "done")).toBe(true);
   });
 });
 
