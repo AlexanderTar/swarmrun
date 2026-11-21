@@ -17,6 +17,8 @@ const stubPaging = () => ({
   hasMore: false,
   loadingMore: false,
   appending: false,
+  rootsTotal: 0,
+  rootCount: 0,
 });
 
 function Host(p: { selected: string; filter?: Filter; onSelect?: (k: string) => void }) {

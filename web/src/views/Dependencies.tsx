@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
-import { C } from "../copy";
+import { C, T } from "../copy";
 import { useGraph } from "../data/queries";
 import {
   type ItemNodeData,
@@ -36,7 +36,6 @@ import {
 import { buildIndex } from "../logic/tree";
 import { NARROW, useMediaQuery } from "../state/media";
 import type { GraphNode, GraphScope, Item } from "../types";
-import { BoardSentinel } from "./BoardSentinel";
 import type { DependenciesProps } from "./props";
 
 function ItemNode({ data }: NodeProps<Node<ItemNodeData>>) {
@@ -160,6 +159,21 @@ function Graph(p: DependenciesProps) {
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border py-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] max-md:flex-nowrap max-md:overflow-x-auto max-md:[&>*]:shrink-0">
+        {p.paging.hasMore && (
+          <span className="flex items-center gap-2">
+            <span className="whitespace-nowrap text-muted-foreground">
+              {T.topLevelLoaded(p.paging.rootCount, p.paging.rootsTotal)}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={p.paging.loadingMore}
+              onClick={p.paging.loadMore}
+            >
+              {p.paging.appending ? C.loadingMore : C.loadMore}
+            </Button>
+          </span>
+        )}
         <span>{C.scope}</span>
         <Segmented
           label={C.scope}
@@ -280,12 +294,6 @@ function Graph(p: DependenciesProps) {
           )}
         </div>
       )}
-      <BoardSentinel
-        loadMore={p.paging.loadMore}
-        hasMore={p.paging.hasMore}
-        loadingMore={p.paging.loadingMore}
-        appending={p.paging.appending}
-      />
     </div>
   );
 }

@@ -76,6 +76,8 @@ export function App() {
       hasMore: board.nextCursor !== "",
       loadingMore: board.loadingMore,
       appending: board.appending,
+      rootsTotal: board.rootsTotal,
+      rootCount: board.rootCount,
     },
   };
   const view =

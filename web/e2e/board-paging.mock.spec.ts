@@ -32,23 +32,45 @@ test("a tall window fills past the first page without scrolling", async ({ page 
   await noHorizontalOverflow(page);
 });
 
-test("kanban scrolls its own scroller to load the rest once", async ({ page }) => {
+test("kanban loads the rest once from its own scroller", async ({ page }) => {
+  // Hold the cursor page so the second page cannot land before the scroll, however the
+  // sentinel first reports.
+  let release!: () => void;
+  const gate = new Promise<void>((res) => {
+    release = res;
+  });
+  await page.route(
+    (url) => url.pathname === "/api/items" && url.searchParams.has("cursor"),
+    async (route) => {
+      await gate;
+      await route.continue();
+    },
+  );
+  let cursors = 0;
+  page.on("request", (r) => {
+    if (r.url().includes("/api/items") && r.url().includes("cursor=")) cursors++;
+  });
   await page.goto("/#/kanban?level=tasks&group=root");
   await expect(page.getByTestId("board-sentinel")).toHaveCount(1);
   // EPIC-30's lane rides on the second page only.
   await expect(page.getByTestId("lane-EPIC-30")).toHaveCount(0);
   await kanbanScroller(page).evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  release();
   await expect(page.getByTestId("lane-EPIC-30")).toBeVisible();
   await expect(page.getByTestId("board-sentinel")).toHaveCount(0);
+  expect(cursors).toBe(1);
   await noHorizontalOverflow(page);
 });
 
-test("dependencies loads every page while the graph stays visible", async ({ page }) => {
+test("dependencies loads the next page from its load-more control", async ({ page }) => {
   await page.goto("/#/dependencies");
-  await expect(page.getByTestId("board-sentinel")).toHaveCount(1);
-  // The canvas never scrolls, so pages chain while the sentinel stays visible.
-  await page.waitForResponse((r) => r.url().includes("/api/items") && r.url().includes("cursor="));
-  await expect(page.getByTestId("board-sentinel")).toHaveCount(0);
+  // The graph canvas never scrolls, so its toolbar carries an explicit control instead of a
+  // scroll sentinel, with the count of loaded vs total top-level items.
+  const more = page.getByRole("button", { name: "Load more" });
+  await expect(more).toBeVisible();
+  await expect(page.getByText("30 of 48 top-level items")).toBeVisible();
+  await more.click();
+  await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
   await noHorizontalOverflow(page);
 });
 

@@ -18,7 +18,14 @@ function setup(p: Partial<HierarchyProps> = {}) {
     onAddChild: vi.fn(),
     onNewItem: vi.fn(),
     onClearFilters: vi.fn(),
-    paging: { loadMore: vi.fn(), hasMore: false, loadingMore: false, appending: false },
+    paging: {
+      loadMore: vi.fn(),
+      hasMore: false,
+      loadingMore: false,
+      appending: false,
+      rootsTotal: 0,
+      rootCount: 0,
+    },
     ...p,
   };
   const user = userEvent.setup();

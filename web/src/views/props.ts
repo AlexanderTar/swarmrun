@@ -17,6 +17,10 @@ export interface Paging {
   loadingMore: boolean;
   /** True only while a cursor append is in flight; drives the loading row. */
   appending: boolean;
+  /** Total top-level items on the server (roots_total); for the explicit pager count. */
+  rootsTotal: number;
+  /** Loaded top-level items; for the explicit pager count. */
+  rootCount: number;
 }
 
 export interface ViewProps {

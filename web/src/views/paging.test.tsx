@@ -40,6 +40,8 @@ const paging = (
   hasMore: false,
   loadingMore: false,
   appending: false,
+  rootsTotal: 0,
+  rootCount: 0,
   ...p,
 });
 const livePaging = (b: {
@@ -47,11 +49,15 @@ const livePaging = (b: {
   nextCursor: string;
   loadingMore: boolean;
   appending: boolean;
+  rootsTotal: number;
+  rootCount: number;
 }) => ({
   loadMore: b.loadMore,
   hasMore: b.nextCursor !== "",
   loadingMore: b.loadingMore,
   appending: b.appending,
+  rootsTotal: b.rootsTotal,
+  rootCount: b.rootCount,
 });
 
 describe("BoardSentinel", () => {
@@ -182,8 +188,7 @@ describe("view paging wires", () => {
     vi.unstubAllGlobals();
   });
 
-  it("Dependencies intersection fetches the next page", async () => {
-    stubIO();
+  it("Dependencies loads the next page from its load-more control", async () => {
     function Host() {
       const board = useBoardItems(none);
       if (!board.loaded) return null;
@@ -199,13 +204,16 @@ describe("view paging wires", () => {
         />
       );
     }
-    const { daemon } = renderWithDaemon(<Host />, {
+    const { daemon, user } = renderWithDaemon(<Host />, {
       daemon: createMockDaemon(seedPaged()),
       events: false,
     });
-    expect(await screen.findByTestId("board-sentinel")).toBeInTheDocument();
-    intersect(true);
+    const more = await screen.findByRole("button", { name: "Load more" });
+    expect(screen.getByText("30 of 48 top-level items")).toBeInTheDocument();
+    await user.click(more);
     await waitFor(() => expect(daemon.calls.some((c) => c.path.includes("cursor="))).toBe(true));
-    vi.unstubAllGlobals();
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument(),
+    );
   });
 });

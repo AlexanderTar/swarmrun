@@ -151,6 +151,9 @@ export const C = {
   // Board paging: the small row at the end of a view while the next page loads. Styled like the
   // other muted helper lines (design Type caption: --text-caption, --muted-foreground).
   loadingMore: "Loading more…",
+  // Dependencies pages explicitly: the graph canvas never scrolls, so its toolbar carries a
+  // control that loads one more page of top-level items per click.
+  loadMore: "Load more",
   scope: "Scope",
   root: "Root",
   neighbourhood: "Neighbourhood",
@@ -402,6 +405,7 @@ export const T = {
   finished: (n: number) => `Finished (${n})`,
   colHeader: (label: string, n: number) => `${label} · ${n}`,
   colTooltip: (shown: number, total: number) => `${shown} of ${total} items`,
+  topLevelLoaded: (shown: number, total: number) => `${shown} of ${total} top-level items`,
   agentsTooltip: (n: number) => `${n} agents working in this item and its children.`,
   typeHint: (typePlural: string) =>
     `${typePlural} have no task cards yet. Switch Card level to Top-level items to see them.`,
