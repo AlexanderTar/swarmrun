@@ -149,6 +149,14 @@ export interface BoardItemsParams {
   limit?: number;
 }
 
+// Pickers (parent select, dependency search) run their own flat queries — never the loaded board
+// pages — so they offer items outside the loaded range.
+export interface FlatItemsParams {
+  type?: string;
+  q?: string;
+  limit?: number;
+}
+
 export type TodoStatus = "pending" | "in_progress" | "completed";
 export interface Todo {
   id: string;

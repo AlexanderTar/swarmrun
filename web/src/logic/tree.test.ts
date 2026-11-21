@@ -153,6 +153,13 @@ describe("tree logic (§16.5, §16.6)", () => {
     ).toBe(false);
     expect(outsideView("NOPE-1", items, none, "hierarchy", "tasks")).toBe(false);
     expect(outsideView("", items, none, "hierarchy", "tasks")).toBe(false);
+    // A deep link whose tree is not loaded is not "outside" an unfiltered view (its page simply
+    // has not loaded yet), but under an active filter its absence means it does not match.
+    expect(outsideView("NOPE-1", items, { ...none, q: "login" }, "hierarchy", "tasks")).toBe(true);
+    expect(outsideView("NOPE-1", items, { ...none, q: "login" }, "kanban", "tasks")).toBe(true);
+    expect(outsideView("NOPE-1", items, { ...none, q: "login" }, "dependencies", "tasks")).toBe(
+      false,
+    );
   });
 
   it("puts chores at the top level and lets them hold tasks", () => {

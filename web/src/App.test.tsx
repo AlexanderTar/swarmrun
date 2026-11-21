@@ -180,6 +180,15 @@ describe("App shell (§16.5)", () => {
     }
   });
 
+  it("opens a deep link outside loaded pages without the outside-view banner", async () => {
+    const daemon = createMockDaemon(seedPaged());
+    renderWithDaemon(<App />, { daemon, events: false, hash: "#/hierarchy?item=EPIC-139" });
+    expect(await screen.findByTestId("details")).toHaveTextContent("EPIC-139");
+    expect(screen.queryByText("This item is outside the current view.")).not.toBeInTheDocument();
+    // EPIC-139 sorts last: the board's first page does not contain it.
+    expect(daemon.calls.filter((c) => c.path === "/api/items?view=board&limit=30")).toHaveLength(1);
+  });
+
   it("shows a banner with the daemon's reason and a working retry when items fail to load", async () => {
     const d = createMockDaemon();
     let attempt = 0;

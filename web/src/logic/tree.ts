@@ -137,8 +137,12 @@ export function outsideView(
   view: View,
   level: CardLevel,
 ): boolean {
+  if (view === "dependencies" || view === "inbox") return false;
   const item = items.find((i) => i.key === key);
-  if (!item || view === "dependencies" || view === "inbox") return false;
+  // Board pages load 30 trees at a time: a deep link whose tree is not loaded yet is not "outside"
+  // an unfiltered view — its page simply has not loaded. Under an active filter its absence means
+  // the server did not return its tree, so it does not match.
+  if (!item) return isFilterActive(f);
   if (view === "kanban" && !LEVEL_TYPES[level].includes(item.type)) return true;
   if (!isFilterActive(f)) return false;
   const fr = filterItems(items, f);

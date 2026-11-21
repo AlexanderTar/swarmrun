@@ -19,7 +19,7 @@ import { Textarea } from "../components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../components/ui/tooltip";
 import { C, T, TYPE_LABEL } from "../copy";
 import { useConnection, useMutation } from "../data/hooks";
-import { useItems } from "../data/queries";
+import { useParentOptions } from "../data/queries";
 import {
   type NewItemForm,
   type NewType,
@@ -41,9 +41,7 @@ export function NewItemSheet(p: {
   onClose(): void;
   onCreated(key: string): void;
 }) {
-  const items = useItems();
   const { connected } = useConnection();
-  const all = items.data?.items ?? [];
   const [form, setForm] = useState<NewItemForm>({
     type: p.type,
     parentKey: "",
@@ -51,6 +49,11 @@ export function NewItemSheet(p: {
     brief: "",
     acceptance: [""],
   });
+  // The parent picker runs its own flat-by-type queries, independent of the loaded board pages,
+  // so it offers parents outside the loaded range. It follows the selected type, not the initial
+  // one — switching story→task swaps the eligible parent types.
+  const parents = useParentOptions(PARENT_TYPES[form.type]);
+  const all = parents.items;
   const [parentTouched, setParentTouched] = useState(false);
   const [requestId] = useState(() => crypto.randomUUID());
   const [error, setError] = useState("");
@@ -106,10 +109,10 @@ export function NewItemSheet(p: {
       )}
       {/* Standing rule: a failed items load must not silently degrade the parent picker to "no
           options" forever -- surface it with a message + retry, same pattern used everywhere else. */}
-      {items.error ? (
+      {parents.error ? (
         <Alert variant="destructive">
-          {errorText(items.error)}{" "}
-          <Button variant="link" onClick={() => items.reload()}>
+          {errorText(parents.error)}{" "}
+          <Button variant="link" onClick={() => parents.reload()}>
             {C.retry}
           </Button>
         </Alert>
@@ -126,7 +129,7 @@ export function NewItemSheet(p: {
           options={TYPES.map((t) => ({ value: t, label: TYPE_LABEL[t] }))}
         />
       </div>
-      {PARENT_TYPES[form.type].length > 0 && items.data && (
+      {PARENT_TYPES[form.type].length > 0 && parents.loaded && (
         <div className="space-y-1.5">
           <Label htmlFor={parentId}>{C.parent}</Label>
           <Select

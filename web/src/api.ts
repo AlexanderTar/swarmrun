@@ -14,6 +14,7 @@ import type {
   CreateItemBody,
   CreateSpikeBody,
   CreateSpikeResponse,
+  FlatItemsParams,
   Graph,
   GraphScope,
   Item,
@@ -181,6 +182,11 @@ export function createApi({
     login: (email: string, password: string) => post("/api/auth/login", { email, password }),
     logout: () => post("/api/auth/logout"),
     items: () => call<ItemsResponse>("GET", "/api/items?view=flat"),
+    flatItems: (p: FlatItemsParams = {}) =>
+      call<ItemsResponse>(
+        "GET",
+        `/api/items${query({ view: "flat", type: p.type, q: p.q, limit: p.limit })}`,
+      ),
     boardItems: (p: BoardItemsParams = {}) =>
       call<BoardItemsResponse>(
         "GET",

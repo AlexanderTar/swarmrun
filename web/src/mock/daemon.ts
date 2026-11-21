@@ -686,15 +686,54 @@ export function createMockDaemon(db: MockDb = seed()): MockDaemon {
     return ok({ items, matches, roots_total: roots.length, next_cursor: next });
   }
 
+  // GET /api/items?view=flat with the picker params (docs/api-state.md): type/status narrow
+  // like the daemon's List (flat rejects chore, unlike board); q is a case-insensitive substring
+  // on key or title, a mock simplification of the daemon's FTS prefix query; limit caps the rows
+  // with the same 400s. Unfiltered, this is byte-identical to before.
+  function flatList(q: URLSearchParams): MockResponse {
+    const type = q.get("type") ?? "";
+    if (type && !["epic", "story", "task", "bug", "spike"].includes(type))
+      return fail(400, "bad_request", `Unknown item type "${type}".`);
+    const status = q.get("status") ?? "";
+    if (
+      status &&
+      ![
+        "draft",
+        "ready",
+        "in_progress",
+        "blocked",
+        "in_review",
+        "awaiting_approval",
+        "done",
+        "cancelled",
+      ].includes(status)
+    )
+      return fail(400, "bad_request", `Unknown status "${status}".`);
+    const needle = (q.get("q") ?? "").trim().toLowerCase();
+    const list = db.items.filter(
+      (i) =>
+        i.archived_at === null &&
+        (type === "" || i.type === type) &&
+        (status === "" || i.status === status) &&
+        (needle === "" ||
+          i.key.toLowerCase().includes(needle) ||
+          i.title.toLowerCase().includes(needle)),
+    );
+    const ls = q.get("limit") ?? "";
+    if (ls !== "") {
+      const n = Number(ls);
+      if (!Number.isInteger(n) || n < 0) return fail(400, "bad_request", "limit must be a number.");
+      if (n < list.length) return ok({ items: list.slice(0, n), matches: list.length });
+    }
+    return ok({ items: list, matches: list.length });
+  }
+
   const K = "(?<key>[^/?]+)";
   const routes: Route[] = [
     [
       "GET",
       /^\/api\/items$/,
-      (c) =>
-        c.q.get("view") === "board"
-          ? listBoard(c.q)
-          : ok({ items: db.items, matches: db.items.length }),
+      (c) => (c.q.get("view") === "board" ? listBoard(c.q) : flatList(c.q)),
     ],
     ["POST", /^\/api\/items$/, (c) => createItem(c.body)],
     ["GET", new RegExp(`^/api/items/${K}$`), (c) => detail(c.p.key as string)],

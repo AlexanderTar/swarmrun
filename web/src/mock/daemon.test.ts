@@ -505,6 +505,23 @@ describe("mock daemon", () => {
     expect(call(d, "GET", "/api/settings").status).toBe(500);
   });
 
+  it("filters flat lists by type/q with a limit for pickers", () => {
+    const d = createMockDaemon(seedPaged());
+    type Flat = { items: Item[]; matches: number };
+    const epics = call(d, "GET", "/api/items?view=flat&type=epic").body as Flat;
+    expect(epics.items.length).toBeGreaterThan(30);
+    expect(epics.items.every((i) => i.type === "epic")).toBe(true);
+    expect(epics.matches).toBe(epics.items.length);
+    const q = call(d, "GET", "/api/items?view=flat&q=EPIC-139&limit=50").body as Flat;
+    expect(q.items.some((i) => i.key === "EPIC-139")).toBe(true);
+    expect(q.items.length).toBeLessThanOrEqual(50);
+    const capped = call(d, "GET", "/api/items?view=flat&limit=5").body as Flat;
+    expect(capped.items).toHaveLength(5);
+    expect(capped.matches).toBe(d.db.items.length);
+    expect(call(d, "GET", "/api/items?view=flat&type=chore")).toMatchObject({ status: 400 });
+    expect(call(d, "GET", "/api/items?view=flat&limit=nope")).toMatchObject({ status: 400 });
+  });
+
   it("seeds more than 30 top-level items so paging is exercised", () => {
     const d = createMockDaemon(seedPaged());
     expect(d.db.items.filter((i) => i.parent_key === null).length).toBeGreaterThan(30);

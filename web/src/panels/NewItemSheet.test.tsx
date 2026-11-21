@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { createMockDaemon } from "../mock/daemon";
+import { seedPaged } from "../mock/fixtures";
 import { renderWithDaemon } from "../test/render";
 import { comboText, optionTexts, pickOption } from "../test/select";
 import { NewItemSheet } from "./NewItemSheet";
@@ -25,6 +26,20 @@ describe("NewItemSheet (§16.5)", () => {
     expect(comboText("Parent")).toContain("BUG-7");
     await user.click(within(sheet).getByRole("radio", { name: "Epic" }));
     expect(within(sheet).queryByRole("combobox", { name: "Parent" })).not.toBeInTheDocument();
+  });
+
+  it("loads parent options from its own flat-by-type query, outside loaded board pages", async () => {
+    const d = createMockDaemon(seedPaged());
+    const { user } = renderWithDaemon(
+      <NewItemSheet type="story" onClose={vi.fn()} onCreated={vi.fn()} />,
+      { daemon: d, events: false },
+    );
+    const sheet = await screen.findByRole("dialog", { name: "New item" });
+    await within(sheet).findByRole("combobox", { name: "Parent" });
+    // EPIC-139 sorts last: it is outside the board's first page but must still be offered.
+    expect(await optionTexts(user, "Parent")).toContain("EPIC-139 · Generated epic 139");
+    expect(d.calls.some((c) => c.path === "/api/items?view=flat&type=epic")).toBe(true);
+    expect(d.calls.some((c) => c.path.startsWith("/api/items?view=board"))).toBe(false);
   });
 
   it("keeps Create item disabled until valid", async () => {

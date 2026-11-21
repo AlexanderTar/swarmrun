@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { errorText } from "../api";
 import { C, T } from "../copy";
 import { useConnection, useMutation } from "../data/hooks";
-import { useItems } from "../data/queries";
+import { useFlatItems } from "../data/queries";
 import { matches } from "../logic/tree";
 import { useToast } from "./Toast";
 import { Button } from "./ui/button";
@@ -14,7 +14,9 @@ export function AddDependency({ itemKey, disabled }: { itemKey: string; disabled
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
-  const items = useItems();
+  // Dependency search runs its own flat q-search (capped by the flat limit), independent of the
+  // loaded board pages, so it offers blockers outside the loaded range.
+  const found = useFlatItems(q.trim() ? { q: q.trim(), limit: 50 } : null);
   const add = useMutation(
     (api, blockedBy: string) => api.addDep(itemKey, blockedBy),
     ["items", "item:", "graph:"],
@@ -31,7 +33,7 @@ export function AddDependency({ itemKey, disabled }: { itemKey: string; disabled
     trigger.current?.focus();
   };
   const hits = q.trim()
-    ? (items.data?.items ?? [])
+    ? (found.data?.items ?? [])
         .filter((i) => i.key !== itemKey && matches(i, { q, type: "", status: "" }))
         .slice(0, 8)
     : [];
@@ -83,7 +85,11 @@ export function AddDependency({ itemKey, disabled }: { itemKey: string; disabled
               {`${i.key} · ${i.title}`}
             </Button>
           ))}
-          {error && <p className="text-destructive">{error}</p>}
+          {error ? (
+            <p className="text-destructive">{error}</p>
+          ) : found.error ? (
+            <p className="text-destructive">{errorText(found.error)}</p>
+          ) : null}
         </div>
       )}
     </div>

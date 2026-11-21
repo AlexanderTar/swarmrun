@@ -342,6 +342,28 @@ describe("boardItems", () => {
   });
 });
 
+describe("flatItems", () => {
+  const page = { items: [], matches: 0 };
+  const routes = {
+    ...localMe,
+    "GET /api/bootstrap": () => json({ token: "t" }),
+  };
+  it("requests view=flat with no params by default", async () => {
+    const f = fakeFetch({ ...routes, "GET /api/items?view=flat": () => json(page) });
+    await expect(createApi({ fetchFn: f.fn }).flatItems()).resolves.toEqual(page);
+  });
+
+  it("passes type/q/limit through", async () => {
+    const f = fakeFetch({
+      ...routes,
+      "GET /api/items?view=flat&type=epic&q=auth&limit=50": () => json(page),
+    });
+    await expect(
+      createApi({ fetchFn: f.fn }).flatItems({ type: "epic", q: "auth", limit: 50 }),
+    ).resolves.toEqual(page);
+  });
+});
+
 describe("errorText", () => {
   it("prefers the transition reason, then the message", () => {
     expect(
