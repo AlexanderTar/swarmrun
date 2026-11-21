@@ -112,6 +112,56 @@ describe("useBoardItems", () => {
     expect(result.current.board.items.filter((i) => i.parent_key === null)).toHaveLength(48);
   });
 
+  it("marks appending only for cursor appends, not range refetches", async () => {
+    const all = roots(48);
+    const kids = all.filter((i) => i.parent_key !== null);
+    const rootList = all.filter((i) => i.parent_key === null);
+    let releaseCursor: (() => void) | null = null;
+    const cursorGate = new Promise<void>((res) => {
+      releaseCursor = res;
+    });
+    const fn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://test");
+      if (url.pathname === "/api/auth/me")
+        return Response.json({ origin: "local", authenticated: true });
+      if (url.pathname === "/api/bootstrap") return Response.json({ token: "t" });
+      const limit = Number(url.searchParams.get("limit") ?? 30);
+      const cursor = url.searchParams.get("cursor") ?? "";
+      if (cursor !== "") await cursorGate;
+      const start = cursor === "" ? 0 : Number(cursor);
+      const slice = rootList.slice(start, start + limit);
+      const keys = new Set(slice.map((r) => r.key));
+      const items = [...slice, ...kids.filter((k) => keys.has(k.root_key))];
+      const next = start + limit < rootList.length ? String(start + limit) : "";
+      return Response.json({
+        items,
+        matches: all.length,
+        roots_total: rootList.length,
+        next_cursor: next,
+      });
+    });
+    vi.stubGlobal("fetch", fn as unknown as typeof fetch);
+    const api = createApi();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <DataProvider api={api} events={false}>
+        {children}
+      </DataProvider>
+    );
+    const { result } = renderHook(() => useBoardItems({ q: "", type: "", status: "" }), {
+      wrapper,
+    });
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+    expect(result.current.appending).toBe(false);
+    act(() => result.current.loadMore());
+    await waitFor(() => expect(result.current.appending).toBe(true));
+    act(() => releaseCursor?.());
+    await waitFor(() =>
+      expect(result.current.items.filter((i) => i.parent_key === null)).toHaveLength(48),
+    );
+    expect(result.current.appending).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
   it("a filter change restarts from page 1", async () => {
     const { calls, wrapper } = setup(roots(48));
     const { result, rerender } = renderHook(

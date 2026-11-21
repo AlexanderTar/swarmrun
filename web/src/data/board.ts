@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { BoardItemsResponse, Item } from "../types";
 import { useApi, useQueryStore } from "./hooks";
 import { qk } from "./queries";
@@ -24,6 +24,8 @@ export interface BoardResult extends BoardData {
   loading: boolean;
   /** An append or range refetch is in flight with data already shown. */
   loadingMore: boolean;
+  /** True only while a cursor append (not a range refetch) is in flight. */
+  appending: boolean;
   error: unknown;
   loadMore(): void;
   reload(): void;
@@ -66,6 +68,7 @@ export function useBoardItems(f: BoardFilter): BoardResult {
   // refetch from the start. Read and cleared synchronously at the top of the loader, so a
   // concurrent invalidation always falls back to the range refetch once the append lands.
   const appendRef = useRef<string | null>(null);
+  const [appending, setAppending] = useState(false);
   const filterRef = useRef(f);
   filterRef.current = f;
   const loadRef = useRef<() => Promise<BoardData>>(async () => ({
@@ -78,16 +81,21 @@ export function useBoardItems(f: BoardFilter): BoardResult {
   loadRef.current = async () => {
     const append = appendRef.current;
     appendRef.current = null;
+    const isAppend = append !== null;
     const flt = filterRef.current;
     const params = {
       q: flt.q || undefined,
       type: flt.type || undefined,
       status: flt.status || undefined,
     };
-    if (append !== null) {
-      const cur = store.get(key)?.data as BoardData | undefined;
-      const res = await api.boardItems({ ...params, cursor: append, limit: BOARD_PAGE });
-      return toBoard(res, cur);
+    if (isAppend) {
+      try {
+        const cur = store.get(key)?.data as BoardData | undefined;
+        const res = await api.boardItems({ ...params, cursor: append, limit: BOARD_PAGE });
+        return toBoard(res, cur);
+      } finally {
+        setAppending(false);
+      }
     }
     const loaded = (store.get(key)?.data as BoardData | undefined)?.rootCount ?? 0;
     const res = await api.boardItems({ ...params, limit: Math.max(loaded, BOARD_PAGE) });
@@ -97,6 +105,7 @@ export function useBoardItems(f: BoardFilter): BoardResult {
   const entry = useSyncExternalStore(subscribe, () => store.get(key));
   useEffect(() => {
     appendRef.current = null;
+    setAppending(false);
     void store.fetch(key, () => loadRef.current());
   }, [key, store]);
 
@@ -104,6 +113,7 @@ export function useBoardItems(f: BoardFilter): BoardResult {
     const data = store.get(key)?.data as BoardData | undefined;
     if (!data || data.nextCursor === "" || store.get(key)?.loading) return;
     appendRef.current = data.nextCursor;
+    setAppending(true);
     void store.fetch(key, () => loadRef.current(), true);
   }, [store, key]);
   const reload = useCallback(() => {
@@ -122,6 +132,7 @@ export function useBoardItems(f: BoardFilter): BoardResult {
     loaded: data !== undefined,
     loading: loading && data === undefined,
     loadingMore: loading && data !== undefined,
+    appending,
     error: entry?.error,
     loadMore,
     reload,
