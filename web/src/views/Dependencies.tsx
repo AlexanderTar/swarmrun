@@ -284,6 +284,7 @@ function Graph(p: DependenciesProps) {
         loadMore={p.paging.loadMore}
         hasMore={p.paging.hasMore}
         loadingMore={p.paging.loadingMore}
+        appending={p.paging.appending}
       />
     </div>
   );

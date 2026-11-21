@@ -253,6 +253,7 @@ export function Hierarchy(p: HierarchyProps) {
         loadMore={p.paging.loadMore}
         hasMore={p.paging.hasMore}
         loadingMore={p.paging.loadingMore}
+        appending={p.paging.appending}
       />
     </div>
   );

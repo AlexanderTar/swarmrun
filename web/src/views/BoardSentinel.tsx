@@ -7,56 +7,78 @@ import { C } from "../copy";
  * scroller, marked the same) and loads one page at a time while `hasMore` (the server's
  * next_cursor) is set.
  *
- * Two guards keep a permanently visible sentinel from chaining every page: the observer ignores
- * its very first report (the current state on observe, not a scroll), and afterwards only a
- * false→true transition loads — while a load is in flight `loadingMore` disables the trigger so
- * repeated reports collapse into the one running request.
+ * A permanently visible sentinel never chains every page on its own: the observer only fires on
+ * a hidden→visible transition, so repeated reports while it stays on screen collapse into the
+ * one running request (and concurrent calls collapse in the board hook's store guard). The one
+ * case the observer cannot see is a first page that never overflows its container — no scroll
+ * event ever fires — so when a load settles with the sentinel still visible, the settle effect
+ * below loads the next page. That re-check stops as soon as content overflows (the sentinel
+ * leaves the viewport plus margin) or the server clears next_cursor, so it is bounded.
+ *
+ * Dependencies reuses the same sentinel: its canvas never scrolls, so every page loads while
+ * the sentinel stays visible, until the server reports the last page.
  */
 export function BoardSentinel(p: {
   loadMore(): void;
   hasMore: boolean;
   loadingMore: boolean;
+  /** True only while a cursor append is in flight; a range refetch shows no row. */
+  appending: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const state = useRef({ loadMore: p.loadMore, armed: false });
-  state.current.loadMore = p.loadMore;
-  state.current.armed = p.hasMore && !p.loadingMore;
+  const live = useRef({ ...p, visible: false });
+  live.current.loadMore = p.loadMore;
+  live.current.hasMore = p.hasMore;
+  live.current.loadingMore = p.loadingMore;
 
+  // A load just settled with the sentinel still on screen: keep loading while the container
+  // still doesn't overflow. Keyed on the true→false transition only, so the mount render and
+  // repeats while visible never fire here — the observer owns those.
+  const prevLoading = useRef(p.loadingMore);
+  useEffect(() => {
+    const was = prevLoading.current;
+    prevLoading.current = p.loadingMore;
+    if (!was || p.loadingMore) return;
+    const s = live.current;
+    if (s.visible && s.hasMore && !s.loadingMore) s.loadMore();
+  }, [p.loadingMore, p.hasMore]);
+
+  // Re-attach when the element appears: the component renders null while there is no next
+  // page, so an empty-deps effect would never observe a sentinel that mounts later (e.g. an
+  // SSE-created 31st root after a range refetch).
   useEffect(() => {
     const el = ref.current;
     if (!el || !("IntersectionObserver" in window)) return;
     // The real scroll container, not the viewport: the section for Hierarchy/Dependencies,
     // Kanban's own scroller for Kanban.
     const root = el.closest("[data-board-scroll]");
-    let first = true;
-    let visible = false;
     const io = new IntersectionObserver(
       (entries) => {
-        if (first) {
-          // The initial report is the current state, not a scroll — a sentinel that starts out
-          // visible must not kick off a load or every page would chain while it stays on screen.
-          first = false;
-          visible = entries.some((e) => e.isIntersecting);
-          return;
-        }
         const now = entries.some((e) => e.isIntersecting);
-        const was = visible;
-        visible = now;
-        if (now && !was && state.current.armed) state.current.loadMore();
+        const s = live.current;
+        const was = s.visible;
+        s.visible = now;
+        // The first report is the current state, and a first page that doesn't overflow starts
+        // out visible: that false→visible transition is a real trigger, or roots past page 1
+        // could never be reached.
+        if (now && !was && s.hasMore && !s.loadingMore) s.loadMore();
       },
       { root, rootMargin: "400px" },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, []);
+  }, [p.hasMore]);
 
-  if (!p.hasMore && !p.loadingMore) return null;
+  if (!p.hasMore && !p.appending) return null;
   return (
-    <div ref={ref} data-testid="board-sentinel" aria-hidden={!p.loadingMore}>
-      {p.loadingMore && (
+    <div ref={ref} data-testid="board-sentinel">
+      {p.appending && (
         // text-xs (0.75rem) is the DS caption size (design/tokens.css --text-caption) and the
         // codebase's helper-line convention, in muted-foreground like the header match count.
-        <p className="py-2 text-center text-xs text-muted-foreground">{C.loadingMore}</p>
+        // role=status announces the async append to screen readers.
+        <p role="status" className="py-2 text-center text-xs text-muted-foreground">
+          {C.loadingMore}
+        </p>
       )}
     </div>
   );

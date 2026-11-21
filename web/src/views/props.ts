@@ -15,6 +15,8 @@ export interface Paging {
   hasMore: boolean;
   /** An append or range refetch is in flight with data already shown. */
   loadingMore: boolean;
+  /** True only while a cursor append is in flight; drives the loading row. */
+  appending: boolean;
 }
 
 export interface ViewProps {

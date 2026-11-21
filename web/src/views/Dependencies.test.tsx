@@ -12,7 +12,7 @@ import { Dependencies } from "./Dependencies";
 
 const none: Filter = { q: "", type: "", status: "" };
 
-const stubPaging = () => ({ loadMore: vi.fn(), hasMore: false, loadingMore: false });
+const stubPaging = () => ({ loadMore: vi.fn(), hasMore: false, loadingMore: false, appending: false });
 
 function Host(p: { selected: string; filter?: Filter; onSelect?: (k: string) => void }) {
   const items = useItems();

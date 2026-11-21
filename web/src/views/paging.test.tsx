@@ -1,8 +1,8 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useBoardItems } from "../data/queries";
 import { createMockDaemon } from "../mock/daemon";
-import { seed, seedPaged } from "../mock/fixtures";
+import { seedPaged } from "../mock/fixtures";
 import { renderWithDaemon } from "../test/render";
 import type { Filter } from "../types";
 import { BoardSentinel } from "./BoardSentinel";
@@ -33,20 +33,35 @@ function stubIO() {
 
 const intersect = (v: boolean) => act(() => ioCb?.([{ isIntersecting: v }]));
 const none: Filter = { q: "", type: "", status: "" };
-const paging = (p: Partial<{ hasMore: boolean; loadingMore: boolean }> = {}) => ({
+const paging = (
+  p: Partial<{ hasMore: boolean; loadingMore: boolean; appending: boolean }> = {},
+) => ({
   loadMore: vi.fn(),
   hasMore: false,
   loadingMore: false,
+  appending: false,
   ...p,
+});
+const livePaging = (b: {
+  loadMore(): void;
+  nextCursor: string;
+  loadingMore: boolean;
+  appending: boolean;
+}) => ({
+  loadMore: b.loadMore,
+  hasMore: b.nextCursor !== "",
+  loadingMore: b.loadingMore,
+  appending: b.appending,
 });
 
 describe("BoardSentinel", () => {
   it("loads one page per scroll-end and ignores repeats while visible", () => {
     stubIO();
     const loadMore = vi.fn();
-    renderWithDaemon(<BoardSentinel loadMore={loadMore} hasMore loadingMore={false} />, {
-      events: false,
-    });
+    renderWithDaemon(
+      <BoardSentinel loadMore={loadMore} hasMore loadingMore={false} appending={false} />,
+      { events: false },
+    );
     intersect(false);
     intersect(true);
     intersect(true);
@@ -54,57 +69,88 @@ describe("BoardSentinel", () => {
     vi.unstubAllGlobals();
   });
 
-  it("never chains pages when permanently visible", () => {
+  it("loads when the first report shows a visible sentinel", () => {
     stubIO();
     const loadMore = vi.fn();
-    renderWithDaemon(<BoardSentinel loadMore={loadMore} hasMore loadingMore={false} />, {
-      events: false,
-    });
-    // The first observation reports the current state: a sentinel that starts out visible
-    // must not kick off a load, or every page would chain while it stays on screen.
+    renderWithDaemon(
+      <BoardSentinel loadMore={loadMore} hasMore loadingMore={false} appending={false} />,
+      { events: false },
+    );
+    // A first page that does not overflow leaves the sentinel visible: the first report must
+    // load, or roots past page 1 can never be reached.
     intersect(true);
-    expect(loadMore).not.toHaveBeenCalled();
+    expect(loadMore).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
 
-  it("shows a small loading row while fetching and nothing extra at the end", () => {
-    const { unmount } = renderWithDaemon(<BoardSentinel loadMore={vi.fn()} hasMore loadingMore />, {
-      events: false,
-    });
-    expect(screen.getByTestId("board-sentinel")).toHaveTextContent("Loading more…");
+  it("shows a small loading row while appending and nothing extra at the end", () => {
+    const { unmount } = renderWithDaemon(
+      <BoardSentinel loadMore={vi.fn()} hasMore loadingMore appending />,
+      { events: false },
+    );
+    const row = screen.getByTestId("board-sentinel");
+    expect(row).toHaveTextContent("Loading more…");
+    expect(row.querySelector('[role="status"]')).not.toBeNull();
     unmount();
-    renderWithDaemon(<BoardSentinel loadMore={vi.fn()} hasMore={false} loadingMore={false} />, {
-      events: false,
-    });
+    // A background range refetch with every page loaded shows no row.
+    renderWithDaemon(
+      <BoardSentinel loadMore={vi.fn()} hasMore={false} loadingMore appending={false} />,
+      { events: false },
+    );
     expect(screen.queryByTestId("board-sentinel")).not.toBeInTheDocument();
+  });
+
+  it("re-checks visibility after a load settles without a new scroll event", () => {
+    stubIO();
+    const loadMore = vi.fn();
+    const { rerender } = renderWithDaemon(
+      <BoardSentinel loadMore={loadMore} hasMore loadingMore={false} appending={false} />,
+      { events: false },
+    );
+    intersect(true);
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    // A load starts and settles with the sentinel still on screen and IO silent: the settle
+    // re-check loads the next page even though the observer never re-fires.
+    rerender(<BoardSentinel loadMore={loadMore} hasMore loadingMore appending />);
+    rerender(<BoardSentinel loadMore={loadMore} hasMore loadingMore={false} appending={false} />);
+    expect(loadMore).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
   });
 });
 
 describe("view paging wires", () => {
-  it("Hierarchy renders the sentinel when more pages remain", () => {
+  it("Hierarchy intersection fetches the next page once", async () => {
     stubIO();
-    const p = paging({ hasMore: true });
-    render(
-      <Hierarchy
-        items={seed().items}
-        loaded
-        filter={none}
-        selected=""
-        connected
-        onSelect={vi.fn()}
-        onAddChild={vi.fn()}
-        onNewItem={vi.fn()}
-        onClearFilters={vi.fn()}
-        paging={p}
-      />,
-    );
-    expect(screen.getByTestId("board-sentinel")).toBeInTheDocument();
+    function Host() {
+      const board = useBoardItems(none);
+      if (!board.loaded) return null;
+      return (
+        <Hierarchy
+          items={board.items}
+          loaded
+          filter={none}
+          selected=""
+          connected
+          onSelect={vi.fn()}
+          onAddChild={vi.fn()}
+          onNewItem={vi.fn()}
+          onClearFilters={vi.fn()}
+          paging={livePaging(board)}
+        />
+      );
+    }
+    renderWithDaemon(<Host />, { daemon: createMockDaemon(seedPaged()), events: false });
+    expect(await screen.findByTestId("board-sentinel")).toBeInTheDocument();
+    // EPIC-30 sorts last, so it rides on the second page only.
+    expect(screen.queryByRole("treeitem", { name: /^EPIC-30 / })).not.toBeInTheDocument();
+    intersect(true);
+    expect(await screen.findByRole("treeitem", { name: /^EPIC-30 / })).toBeInTheDocument();
+    expect(screen.queryByTestId("board-sentinel")).not.toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 
-  it("Kanban renders the sentinel in its own scroller when more pages remain", async () => {
+  it("Kanban intersection fetches the next page once in its own scroller", async () => {
     stubIO();
-    const p = paging({ hasMore: true });
     function Host() {
       const board = useBoardItems(none);
       if (!board.loaded) return null;
@@ -124,18 +170,20 @@ describe("view paging wires", () => {
           onReview={vi.fn()}
           onClearFilters={vi.fn()}
           onNewItem={vi.fn()}
-          paging={p}
+          paging={livePaging(board)}
         />
       );
     }
-    renderWithDaemon(<Host />, { events: false });
+    renderWithDaemon(<Host />, { daemon: createMockDaemon(seedPaged()), events: false });
     expect(await screen.findByTestId("board-sentinel")).toBeInTheDocument();
+    expect(screen.queryByTestId("lane-EPIC-30")).not.toBeInTheDocument();
+    intersect(true);
+    expect(await screen.findByTestId("lane-EPIC-30")).toBeInTheDocument();
     vi.unstubAllGlobals();
   });
 
-  it("Dependencies renders the sentinel when more pages remain", async () => {
+  it("Dependencies intersection fetches the next page", async () => {
     stubIO();
-    const p = paging({ hasMore: true });
     function Host() {
       const board = useBoardItems(none);
       if (!board.loaded) return null;
@@ -147,12 +195,19 @@ describe("view paging wires", () => {
           selected="EPIC-12"
           connected
           onSelect={vi.fn()}
-          paging={p}
+          paging={livePaging(board)}
         />
       );
     }
-    renderWithDaemon(<Host />, { daemon: createMockDaemon(seedPaged()), events: false });
+    const { daemon } = renderWithDaemon(<Host />, {
+      daemon: createMockDaemon(seedPaged()),
+      events: false,
+    });
     expect(await screen.findByTestId("board-sentinel")).toBeInTheDocument();
+    intersect(true);
+    await waitFor(() =>
+      expect(daemon.calls.some((c) => c.path.includes("cursor="))).toBe(true),
+    );
     vi.unstubAllGlobals();
   });
 });
