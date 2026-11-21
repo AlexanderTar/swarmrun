@@ -74,12 +74,22 @@ const StoryNode = ({ data }: NodeProps<Node<StoryNodeData>>) => (
 
 const nodeTypes = { item: ItemNode, story: StoryNode };
 
-// First root that waits for something or is waited on; the first root when none does.
+// A root counts as edgeful when it waits, is waited on, or its subtree holds an unresolved
+// dependency: the mock/daemon `blocked_by` lists unresolved edges only, and the seeded edges
+// sit on children (TASK-102 blocked by TASK-98), so a roots-only check calls every page-1 root
+// edge-free and the view opens on an empty graph.
 // ponytail: reads blocked_by, which lists unresolved dependencies only, so a root whose
 // dependencies are all resolved looks edge-free; upgrade by asking the daemon for the edges.
+function hasEdges(root: Item, items: Item[]): boolean {
+  if (root.blocked_by.length > 0) return true;
+  return items.some(
+    (i) => i.blocked_by.includes(root.key) || (i.root_key === root.key && i.blocked_by.length > 0),
+  );
+}
+
+// First root that waits for something or is waited on; the first root when none does.
 function firstRootWithEdges(roots: Item[], items: Item[]): Item | undefined {
-  const blockers = new Set(items.flatMap((i) => i.blocked_by));
-  return roots.find((r) => r.blocked_by.length > 0 || blockers.has(r.key)) ?? roots[0];
+  return roots.find((r) => hasEdges(r, items)) ?? roots[0];
 }
 
 function Graph(p: DependenciesProps) {
@@ -93,19 +103,56 @@ function Graph(p: DependenciesProps) {
   // re-picking on every empty selection would reopen Details right after the user closes it.
   const [anchor, setAnchor] = useState(p.selected);
   const autoPicked = useRef(false);
+  const autoKey = useRef<string | null>(null);
   // Selecting a root opens Details, which covers the whole screen below 1100 (phones in landscape too): show the graph first there.
   const phone = useMediaQuery(NARROW);
   const graph = useGraph(anchor || null, scope, hops);
   const idx = useMemo(() => buildIndex(p.items), [p.items]);
 
   useEffect(() => {
-    if (p.selected) setAnchor(p.selected);
-    else if (!anchor && !autoPicked.current && idx.roots[0]) {
+    const best = idx.roots.length ? firstRootWithEdges(idx.roots, p.items) : undefined;
+    if (p.selected) {
+      setAnchor(p.selected);
+      // An automatic selection rides on the first edgeful root loaded so far: when a later page
+      // lands a better (edgeful) root while the user still hasn't chosen (selected is the auto
+      // key), upgrade to it instead of sitting on an empty graph.
+      if (
+        best &&
+        autoKey.current &&
+        p.selected === autoKey.current &&
+        best.key !== autoKey.current
+      ) {
+        const cur = idx.byKey.get(autoKey.current);
+        if ((!cur || !hasEdges(cur, p.items)) && hasEdges(best, p.items)) {
+          autoKey.current = best.key;
+          if (phone) setAnchor(best.key);
+          else p.onSelect(best.key);
+        }
+      }
+      return;
+    }
+    if (!anchor && !autoPicked.current && best) {
       autoPicked.current = true;
-      if (phone) {
-        const first = firstRootWithEdges(idx.roots, p.items);
-        if (first) setAnchor(first.key);
-      } else p.onSelect(idx.roots[0].key);
+      autoKey.current = best.key;
+      if (phone) setAnchor(best.key);
+      else p.onSelect(best.key);
+      return;
+    }
+    // Phone keeps the anchor locally (no URL item): upgrade an edgeless auto-pick once an
+    // edgeful root arrives, while the user hasn't picked.
+    if (
+      !p.selected &&
+      phone &&
+      anchor &&
+      autoKey.current === anchor &&
+      best &&
+      best.key !== anchor
+    ) {
+      const cur = idx.byKey.get(anchor);
+      if (cur && !hasEdges(cur, p.items) && hasEdges(best, p.items)) {
+        autoKey.current = best.key;
+        setAnchor(best.key);
+      }
     }
   }, [p.selected, anchor, idx, p.items, p.onSelect, phone]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: p.selected is the trigger that clears the picked item, the effect does not read it
@@ -160,8 +207,8 @@ function Graph(p: DependenciesProps) {
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-2 border-b border-border py-2 pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] max-md:flex-nowrap max-md:overflow-x-auto max-md:[&>*]:shrink-0">
         {p.paging.hasMore && (
-          <span className="flex items-center gap-2">
-            <span className="whitespace-nowrap text-muted-foreground">
+          <span className="flex items-center gap-2 max-md:order-last">
+            <span className="whitespace-nowrap text-muted-foreground max-md:hidden">
               {T.topLevelLoaded(p.paging.rootCount, p.paging.rootsTotal)}
             </span>
             <Button

@@ -116,9 +116,34 @@ describe("BoardSentinel", () => {
     intersect(true);
     expect(loadMore).toHaveBeenCalledTimes(1);
     // A load starts and settles with the sentinel still on screen and IO silent: the settle
-    // re-check loads the next page even though the observer never re-fires.
+    // re-arms the observer so its fresh report loads the next page.
     rerender(<BoardSentinel loadMore={loadMore} hasMore loadingMore appending />);
     rerender(<BoardSentinel loadMore={loadMore} hasMore loadingMore={false} appending={false} />);
+    intersect(true);
+    expect(loadMore).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+
+  it("does not chain a second page when the sentinel leaves the viewport after an append", () => {
+    stubIO();
+    const loadMore = vi.fn();
+    const { rerender } = renderWithDaemon(
+      <BoardSentinel loadMore={loadMore} hasMore loadingMore={false} appending={false} />,
+      { events: false },
+    );
+    intersect(true);
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    // The append lands and the load settles while IO has not reported yet (its stale flag still
+    // says visible). A stale-flag re-check would fire a second page here even though the new
+    // content pushed the sentinel out of view; re-arming must wait for a fresh IO report.
+    rerender(<BoardSentinel loadMore={loadMore} hasMore loadingMore appending />);
+    rerender(<BoardSentinel loadMore={loadMore} hasMore loadingMore={false} appending={false} />);
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    // The fresh report says the sentinel left the viewport: no load.
+    intersect(false);
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    // A later scroll back into view loads exactly one more page.
+    intersect(true);
     expect(loadMore).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });

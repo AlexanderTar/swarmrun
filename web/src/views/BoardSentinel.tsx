@@ -11,12 +11,10 @@ import { C } from "../copy";
  * a hidden→visible transition, so repeated reports while it stays on screen collapse into the
  * one running request (and concurrent calls collapse in the board hook's store guard). The one
  * case the observer cannot see is a first page that never overflows its container — no scroll
- * event ever fires — so when a load settles with the sentinel still visible, the settle effect
- * below loads the next page. That re-check stops as soon as content overflows (the sentinel
- * leaves the viewport plus margin) or the server clears next_cursor, so it is bounded.
- *
- * Dependencies reuses the same sentinel: its canvas never scrolls, so every page loads while
- * the sentinel stays visible, until the server reports the last page.
+ * event ever fires — so when a load settles the sentinel re-arms the observer (resetting the
+ * visible flag and re-observing the node) and waits for its fresh report. That re-check stops
+ * exactly when content overflows (the fresh report says hidden) or the server clears
+ * next_cursor, so it is bounded.
  */
 export function BoardSentinel(p: {
   loadMore(): void;
@@ -30,26 +28,46 @@ export function BoardSentinel(p: {
   live.current.hasMore = p.hasMore;
   live.current.loadingMore = p.loadingMore;
 
-  // A load just settled with the sentinel still on screen: keep loading while the container
-  // still doesn't overflow. Keyed on the true→false transition only, so the mount render and
-  // repeats while visible never fire here — the observer owns those. A fresh mount after an
-  // SSE-created page is covered by the observer's first report, so hasMore needs no dep here.
+  const nodeRef = useRef<HTMLDivElement | null>(null);
+  const ioRef = useRef<IntersectionObserver | null>(null);
+
+  // A load just settled: re-arm the observer so the next decision comes from a fresh IO report,
+  // not the stale visible flag (which still says visible until IO reports the post-append
+  // position). Resetting visible first means the fresh true report is a real false→visible
+  // trigger; a fresh false report loads nothing. Keyed on the true→false transition only, so
+  // the mount render and repeats while visible never fire here — the observer owns those. A
+  // fresh mount after an SSE-created page is covered by the observer's first report, so hasMore
+  // needs no dep here.
   const prevLoading = useRef(p.loadingMore);
   useEffect(() => {
     const was = prevLoading.current;
     prevLoading.current = p.loadingMore;
     if (!was || p.loadingMore) return;
     const s = live.current;
-    if (s.visible && s.hasMore && !s.loadingMore) s.loadMore();
+    if (!s.hasMore || s.loadingMore) return;
+    const io = ioRef.current;
+    const node = nodeRef.current;
+    if (io && node) {
+      s.visible = false;
+      io.unobserve(node);
+      io.observe(node);
+      return;
+    }
+    if (s.visible) s.loadMore();
   }, [p.loadingMore]);
 
   // A callback ref, not an effect: the component renders null while there is no next page, so
   // the observer attaches when the element mounts — including a later mount (e.g. an
   // SSE-created 31st root after a range refetch) — and detaches via the cleanup on unmount.
   const setNode = useCallback((el: HTMLDivElement | null) => {
+    if (ioRef.current) {
+      ioRef.current.disconnect();
+      ioRef.current = null;
+    }
+    nodeRef.current = el;
     if (!el || !("IntersectionObserver" in window)) return;
-    // The real scroll container, not the viewport: the section for Hierarchy/Dependencies,
-    // Kanban's own scroller for Kanban.
+    // The real scroll container, not the viewport: the section for Hierarchy, Kanban's own
+    // scroller for Kanban.
     const root = el.closest("[data-board-scroll]");
     const io = new IntersectionObserver(
       (entries) => {
@@ -64,6 +82,7 @@ export function BoardSentinel(p: {
       },
       { root, rootMargin: "400px" },
     );
+    ioRef.current = io;
     io.observe(el);
     return () => io.disconnect();
   }, []);

@@ -33,14 +33,15 @@ export function mockDaemon(): Plugin {
       let current: Promise<MockDaemon> | undefined;
       let remote = false;
       const daemon = () => {
-        // The serve daemon seeds the paged fixtures (>30 roots) so dev and Playwright
-        // exercise board paging; unit tests opt in via seedPaged() explicitly.
+        // The serve daemon seeds 100 generated roots (108 total, 4 pages) so dev and
+        // Playwright exercise multi-page chaining; unit tests opt in via seedPaged() explicitly
+        // (default 40, 2 pages).
         current ??= Promise.all([
           server.ssrLoadModule("/src/mock/daemon.ts"),
           server.ssrLoadModule("/src/mock/fixtures.ts"),
         ]).then(([dm, fx]) =>
           (dm.createMockDaemon as (db?: MockDb) => MockDaemon)(
-            (fx.seedPaged as (n?: number) => MockDb)(),
+            (fx.seedPaged as (n?: number) => MockDb)(100),
           ),
         );
         return current;

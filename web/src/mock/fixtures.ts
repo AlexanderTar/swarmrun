@@ -826,15 +826,30 @@ export function seed(): MockDb {
 // hand-written root except EPIC-30, whose done tree sorts last by priority anyway.
 export function seedPaged(n = 40): MockDb {
   const db = seed();
-  for (let i = 0; i < n; i++)
+  for (let i = 0; i < n; i++) {
+    const root = `EPIC-${100 + i}`;
     db.items.push(
       makeItem({
-        key: `EPIC-${100 + i}`,
+        key: root,
         title: `Generated epic ${100 + i}`,
-        status: "ready",
+        // done (final) so Hierarchy collapses the generated child by default: one row per root,
+        // so a tall viewport genuinely fits early pages and the settle re-check is exercised.
+        status: "done",
         priority: (i % 4) as 0 | 1 | 2 | 3,
         created_at: NOW - (4000 + i) * MIN,
       }),
+      // One task per generated root so Kanban's task lanes grow with every page: without it
+      // task-level Kanban adds no content past page 1 and a single scroll correctly chains to
+      // the end, which no single-page assertion can catch.
+      makeItem({
+        key: `TASK-${9000 + i}`,
+        title: `Generated task ${9000 + i}`,
+        status: "ready",
+        parent_key: root,
+        root_key: root,
+        created_at: NOW - (4000 + i) * MIN,
+      }),
     );
+  }
   return db;
 }
