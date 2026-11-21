@@ -27,3 +27,30 @@ curl -s -o /dev/null -w 'bytes=%{size_download} time=%{time_total}s\n' \
 ```
 
 Expect well under 1 MB and a few seconds. Count nodes with `... | jq '[.agents | .. | objects | select(has("finished_count"))] | length'` (start at `.agents`: the state object carries `finished_count` too). Run the tests with `go test ./internal/httpapi -run 'PruneFinished|StateTrims|StateFinishedCount|StateNeverBuilds'`.
+
+## GET /api/items views
+
+- No `view` (or `view=tree`) returns the whole forest in tree order with
+  `{items, matches}`; `view=flat` returns the flat match list in the same
+  shape. Requests without the new params below are byte-identical to before.
+- `view=flat&limit=N` caps the returned rows at N for picker search;
+  `matches` still counts every match. A non-numeric or negative limit is a
+  400 `bad_request` ("limit must be a number.").
+- `view=board` is the opt-in paged mode for the web board: at most `limit`
+  top-level items (default 30, clamped to [1, 1000]) per request, each with
+  its whole non-archived subtree, ordered exactly like the web client's
+  `compareTopLevel` (priority ASC, `created_at` DESC, id ASC).
+- Paging is keyset-based: `next_cursor` encodes the last root of the page, so
+  following it visits every tree exactly once even under inserts. It is `""`
+  on the last page. A bad cursor or a non-numeric limit is a 400
+  `bad_request` with a plain message.
+- Filters (`q`, `type`, `status`) select whole trees: a root's tree is
+  included when any item in it matches. Board `q` is the board's
+  case-insensitive substring on key or title, NOT the tree view's FTS query.
+  `type` also accepts `chore` here. The response is
+  `{items, matches, roots_total, next_cursor}`: `matches` counts matching
+  items across all trees (every non-archived item when unfiltered),
+  `roots_total` counts the trees across all pages.
+- The root `LIMIT` happens in SQL before enrichment, so a page loads only its
+  own trees. Tests: `internal/items/board_test.go`,
+  `internal/httpapi/board_test.go`.

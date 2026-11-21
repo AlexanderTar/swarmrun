@@ -170,11 +170,25 @@ func (s *Server) idempotent(w http.ResponseWriter, r *http.Request, requestID, t
 
 func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	if q.Get("view") == "board" {
+		s.listBoard(w, r)
+		return
+	}
 	list, n, err := s.Items.List(r.Context(), items.ListFilter{View: q.Get("view"), Type: items.Type(q.Get("type")),
 		Status: items.Status(q.Get("status")), Q: q.Get("q"), Root: q.Get("root")})
 	if err != nil {
 		s.writeErr(w, err)
 		return
+	}
+	if q.Get("view") == "flat" && q.Get("limit") != "" {
+		capped, err := strconv.Atoi(q.Get("limit"))
+		if err != nil || capped < 0 {
+			s.writeErr(w, apiErr(http.StatusBadRequest, "bad_request", "limit must be a number."))
+			return
+		}
+		if capped < len(list) {
+			list = list[:capped]
+		}
 	}
 	out, err := s.itemsOut(r.Context(), list)
 	if err != nil {
@@ -182,6 +196,36 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out, "matches": n})
+}
+
+// listBoard serves the opt-in paged board mode: at most limit top-level trees
+// per request, ordered like the web client's compareTopLevel, with an opaque
+// keyset cursor. q here is the board's case-insensitive substring on key or
+// title, not the tree view's FTS query.
+func (s *Server) listBoard(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit := 30
+	if ls := q.Get("limit"); ls != "" {
+		n, err := strconv.Atoi(ls)
+		if err != nil {
+			s.writeErr(w, apiErr(http.StatusBadRequest, "bad_request", "limit must be a number."))
+			return
+		}
+		limit = min(max(n, 1), 1000)
+	}
+	page, err := s.Items.ListBoard(r.Context(), items.BoardFilter{Q: q.Get("q"), Type: items.Type(q.Get("type")),
+		Status: items.Status(q.Get("status")), Cursor: q.Get("cursor"), Limit: limit})
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	out, err := s.itemsOut(r.Context(), page.Items)
+	if err != nil {
+		s.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "matches": page.Matches,
+		"roots_total": page.RootsTotal, "next_cursor": page.NextCursor})
 }
 
 func (s *Server) createItem(w http.ResponseWriter, r *http.Request) {
