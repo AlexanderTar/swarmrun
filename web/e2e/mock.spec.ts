@@ -228,6 +228,8 @@ async function drag(page: import("@playwright/test").Page, from: string, to: str
 test("dragging an allowed card shows Updating… and settles", async ({ page }, testInfo) => {
   desktopOnly(testInfo, "mouse drag; touch uses Move to…");
   await page.goto("/#/kanban");
+  // The paged board holds 100+ lanes: bring EPIC-12 into view before measuring drag boxes.
+  await page.getByTestId("lane-EPIC-12").scrollIntoViewIfNeeded();
   const drop = await drag(page, "card-TASK-103", "cell-EPIC-12-blocked");
   await drop();
   await expect(page.getByTestId("cell-EPIC-12-blocked").getByTestId("card-TASK-103")).toBeVisible();
@@ -240,6 +242,8 @@ test("dragging to a refused column shows the lock, returns the card and toasts",
 }, testInfo) => {
   desktopOnly(testInfo, "mouse drag; touch uses Move to…");
   await page.goto("/#/kanban");
+  // The paged board holds 100+ lanes: bring EPIC-12 into view before measuring drag boxes.
+  await page.getByTestId("lane-EPIC-12").scrollIntoViewIfNeeded();
   const drop = await drag(page, "card-TASK-101", "cell-EPIC-12-ready");
   await expect(page.getByTestId("cell-EPIC-12-ready")).toContainText(
     "Couldn't update status. The item remains In progress.",
@@ -361,6 +365,13 @@ test("kanban lane headers stay on screen at every horizontal scroll offset and a
 
 test("Move to… works from the keyboard", async ({ page }) => {
   await page.goto("/#/kanban");
+  // BUG-7 rides on page 2 of the paged board: scroll the lane scroller to load it first.
+  await page
+    .locator("[data-board-scroll]")
+    .last()
+    .evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  await expect(page.getByTestId("lane-BUG-7")).toBeVisible();
+  await page.getByTestId("lane-BUG-7").scrollIntoViewIfNeeded();
   // the card itself picks up "Move to… TASK-110" in its own accessible name (dnd-kit gives it
   // role="button", and the nested Move-to button's aria-label bleeds into name-from-content), so
   // scope to the card to get the actual Move-to button.
