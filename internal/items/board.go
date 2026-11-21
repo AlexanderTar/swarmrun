@@ -184,9 +184,7 @@ func (s *Store) ListBoard(ctx context.Context, f BoardFilter) (BoardPage, error)
 		if err := s.enrich(ctx, s.DB, roots); err != nil {
 			return BoardPage{}, err
 		}
-		for i := range roots {
-			all[i] = roots[i]
-		}
+		copy(all, roots)
 	}
 	return BoardPage{Items: assembleTree(all), Matches: matches, RootsTotal: rootsTotal, NextCursor: next}, nil
 }
