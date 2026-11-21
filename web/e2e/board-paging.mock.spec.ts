@@ -37,6 +37,9 @@ test("loading row render while the next page fetches", async ({ page }, testInfo
   await page.getByTestId("view").evaluate((el) => el.scrollTo(0, el.scrollHeight));
   await expect(page.getByText("Loading more…")).toBeVisible();
   await page.screenshot({ path: shot(testInfo, "loading"), animations: "disabled" });
+  await page
+    .getByText("Loading more…")
+    .screenshot({ path: shot(testInfo, "loading-row"), animations: "disabled" });
   await page.unrouteAll({ behavior: "wait" });
   await expect(topRows(page)).toHaveCount(48);
 });

@@ -54,7 +54,9 @@ export function BoardSentinel(p: {
   return (
     <div ref={ref} data-testid="board-sentinel" aria-hidden={!p.loadingMore}>
       {p.loadingMore && (
-        <p className="py-2 text-center text-[13px] text-muted-foreground">{C.loadingMore}</p>
+        // text-xs (0.75rem) is the DS caption size (design/tokens.css --text-caption) and the
+        // codebase's helper-line convention, in muted-foreground like the header match count.
+        <p className="py-2 text-center text-xs text-muted-foreground">{C.loadingMore}</p>
       )}
     </div>
   );
