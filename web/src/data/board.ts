@@ -68,7 +68,7 @@ export function useBoardItems(f: BoardFilter): BoardResult {
   const appendRef = useRef<string | null>(null);
   const filterRef = useRef(f);
   filterRef.current = f;
-  const loadRef = useRef<( ) => Promise<BoardData>>(async () => ({
+  const loadRef = useRef<() => Promise<BoardData>>(async () => ({
     items: [],
     matches: 0,
     rootsTotal: 0,
