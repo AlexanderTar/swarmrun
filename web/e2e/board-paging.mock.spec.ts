@@ -23,10 +23,24 @@ test("board loads 30 roots first, scrolling loads the rest once", async ({ page 
 });
 
 test("a tall window fills past the first page without scrolling", async ({ page }) => {
+  // Hold the cursor page so the second page cannot land early, however the sentinel reports.
+  let release!: () => void;
+  const gate = new Promise<void>((res) => {
+    release = res;
+  });
+  await page.route(
+    (url) => url.pathname === "/api/items" && url.searchParams.has("cursor"),
+    async (route) => {
+      await gate;
+      await route.continue();
+    },
+  );
   await page.setViewportSize({ width: 1440, height: 2200 });
   await page.goto("/#/hierarchy");
   await expect(topRows(page)).toHaveCount(30);
+  await expect(page.getByRole("treeitem", { name: /^EPIC-30 / })).toHaveCount(0);
   // Page 1 never overflows this viewport, so the visible sentinel keeps loading.
+  release();
   await expect(topRows(page)).toHaveCount(48, { timeout: 10_000 });
   await expect(page.getByRole("treeitem", { name: /^EPIC-30 / })).toBeVisible();
   await noHorizontalOverflow(page);

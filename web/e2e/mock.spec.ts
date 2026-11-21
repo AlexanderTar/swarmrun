@@ -511,7 +511,7 @@ test("creating an item confirms success", async ({ page }) => {
   await page.getByRole("menuitem", { name: "Story" }).click();
   const sheet = page.getByRole("dialog", { name: "New item" });
   await sheet.getByRole("combobox", { name: "Parent" }).click();
-  await page.getByRole("option", { name: /EPIC-12/ }).click();
+  await page.getByRole("option", { name: "EPIC-12 \u00b7 Authentication" }).click();
   await sheet.getByRole("textbox", { name: "Title" }).fill("Two-factor login");
   await sheet.getByRole("button", { name: "Create item" }).click();
   await expect(page.getByText(/Created STORY-\d+/)).toBeVisible();
@@ -523,7 +523,7 @@ test("toast uses the popover surface in the browser", async ({ page }) => {
   await page.getByRole("menuitem", { name: "Story" }).click();
   const sheet = page.getByRole("dialog", { name: "New item" });
   await sheet.getByRole("combobox", { name: "Parent" }).click();
-  await page.getByRole("option", { name: /EPIC-12/ }).click();
+  await page.getByRole("option", { name: "EPIC-12 \u00b7 Authentication" }).click();
   await sheet.getByRole("textbox", { name: "Title" }).fill("Toast surface check");
   await sheet.getByRole("button", { name: "Create item" }).click();
   const toast = page.locator("[data-sonner-toast]").last();
