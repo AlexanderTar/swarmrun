@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { BoardItemsResponse, Item } from "../types";
-import { useApi, useQueryStore } from "./hooks";
+import { useApi, useConnection, useQueryStore } from "./hooks";
 import { qk } from "./queries";
 
 export interface BoardFilter {
@@ -64,6 +64,7 @@ export function useBoardItems(f: BoardFilter): BoardResult {
   const key = qk.board(f.q, f.type, f.status);
   const api = useApi();
   const store = useQueryStore();
+  const { connected } = useConnection();
   // loadMore arms a cursor append; every other load (initial, invalidation, reload) is a range
   // refetch from the start. Read and cleared synchronously at the top of the loader, so a
   // concurrent invalidation always falls back to the range refetch once the append lands.
@@ -110,12 +111,17 @@ export function useBoardItems(f: BoardFilter): BoardResult {
   }, [key, store]);
 
   const loadMore = useCallback(() => {
-    const data = store.get(key)?.data as BoardData | undefined;
-    if (!data || data.nextCursor === "" || store.get(key)?.loading) return;
+    const entry = store.get(key);
+    const data = entry?.data as BoardData | undefined;
+    if (!data || data.nextCursor === "" || entry?.loading) return;
+    // A failed load or a closed connection stops auto-loading: the sentinel re-arms after every
+    // settle, so without this a rejecting append retries in a tight loop. Retry belongs to the
+    // error banner (reload) and to the reconnect refetch, whose settle re-arms the sentinel.
+    if (entry?.error !== undefined || !connected) return;
     appendRef.current = data.nextCursor;
     setAppending(true);
     void store.fetch(key, () => loadRef.current(), true);
-  }, [store, key]);
+  }, [store, key, connected]);
   const reload = useCallback(() => {
     appendRef.current = null;
     void store.fetch(key, () => loadRef.current(), true);

@@ -1,9 +1,10 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, render, renderHook, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { createApi } from "../api";
 import { makeItem } from "../logic/tree";
 import type { Item } from "../types";
+import { BoardSentinel } from "../views/BoardSentinel";
 import { DataProvider, useInvalidate } from "./hooks";
 import { useBoardItems } from "./queries";
 
@@ -177,5 +178,81 @@ describe("useBoardItems", () => {
         "/api/items?view=board&limit=30&q=epic-1",
       ]),
     );
+  });
+
+  it("a failed append sends one request, not a retry loop, until the user retries", async () => {
+    const all = roots(48);
+    const rootList = all.filter((i) => i.parent_key === null);
+    let cursorCalls = 0;
+    let failCursor = true;
+    const fn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://test");
+      if (url.pathname === "/api/auth/me")
+        return Response.json({ origin: "local", authenticated: true });
+      if (url.pathname === "/api/bootstrap") return Response.json({ token: "t" });
+      const limit = Number(url.searchParams.get("limit") ?? 30);
+      const cursor = url.searchParams.get("cursor") ?? "";
+      if (cursor !== "") {
+        cursorCalls++;
+        if (failCursor)
+          return Response.json({ error: { code: "internal", message: "boom" } }, { status: 500 });
+      }
+      const start = cursor === "" ? 0 : Number(cursor);
+      return Response.json({
+        items: rootList.slice(start, start + limit),
+        matches: all.length,
+        roots_total: rootList.length,
+        next_cursor: start + limit < rootList.length ? String(start + limit) : "",
+      });
+    });
+    vi.stubGlobal("fetch", fn as unknown as typeof fetch);
+    // A permanently visible sentinel: every observe() reports visible, like a real observer
+    // does for an on-screen node.
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(private cb: (e: { isIntersecting: boolean }[]) => void) {}
+        observe() {
+          setTimeout(() => this.cb([{ isIntersecting: true }]), 5);
+        }
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    const api = createApi();
+    function Host() {
+      const b = useBoardItems({ q: "", type: "", status: "" });
+      return (
+        <div>
+          <span data-testid="roots">{b.rootCount}</span>
+          <span data-testid="err">{b.error ? "error" : ""}</span>
+          <button type="button" onClick={b.reload}>
+            retry
+          </button>
+          <BoardSentinel
+            loadMore={b.loadMore}
+            hasMore={b.nextCursor !== ""}
+            loadingMore={b.loadingMore}
+            appending={b.appending}
+          />
+        </div>
+      );
+    }
+    render(
+      <DataProvider api={api} events={false}>
+        <Host />
+      </DataProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("err")).toHaveTextContent("error"));
+    // Give any retry loop several settle→rearm→append cycles to show itself.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(cursorCalls).toBe(1);
+    // The error banner's retry (reload) clears the error; the settle re-arms the sentinel,
+    // which loads the next page once the daemon recovers.
+    failCursor = false;
+    act(() => screen.getByRole("button", { name: "retry" }).click());
+    await waitFor(() => expect(screen.getByTestId("roots")).toHaveTextContent("48"));
+    expect(screen.getByTestId("err")).toHaveTextContent("");
+    vi.unstubAllGlobals();
   });
 });
