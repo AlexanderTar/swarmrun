@@ -36,6 +36,12 @@ Expect well under 1 MB and a few seconds. Count nodes with `... | jq '[.agents |
 - `view=flat&limit=N` caps the returned rows at N for picker search;
   `matches` still counts every match. A non-numeric or negative limit is a
   400 `bad_request` ("limit must be a number.").
+- `view=flat&match=substring` swaps the `q` semantics from the default FTS
+  prefix search (key, title and brief tokens) to the board's case-insensitive
+  substring on key or title: it finds mid-word hits and ignores the brief, so
+  brief-only matches can't crowd real ones out of a `limit`. The web
+  dependency picker uses it; the CLI and menubar keep the FTS default. Any
+  other `match` value is a 400 `bad_request` ("match must be substring.").
 - `view=board` is the opt-in paged mode for the web board: at most `limit`
   top-level items (default 30, clamped to [1, 1000]) per request, each with
   its whole non-archived subtree, ordered exactly like the web client's

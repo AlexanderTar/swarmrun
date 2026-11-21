@@ -14,6 +14,7 @@ type ListFilter struct {
 	Status Status
 	Q      string
 	Root   string // top-level item key
+	Match  string // "" (FTS prefix search over key, title and brief) | "substring"
 }
 
 // ftsQuery turns free text into an FTS5 query: every token quoted, prefix-matched, ANDed.
@@ -37,6 +38,9 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Item, int, error) {
 	if f.View != "" && f.View != "tree" && f.View != "flat" {
 		return nil, 0, errf(CodeBadRequest, "view must be tree or flat.")
 	}
+	if f.Match != "" && f.Match != "substring" {
+		return nil, 0, errf(CodeBadRequest, "match must be substring.")
+	}
 	if f.Type != "" && !slices.Contains([]Type{Epic, Story, Task, Bug, Spike}, f.Type) {
 		return nil, 0, errf(CodeBadRequest, "Unknown item type %q.", f.Type)
 	}
@@ -54,7 +58,10 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Item, int, error) {
 	if f.Root != "" {
 		where, args = append(where, "r.key = ?"), append(args, f.Root)
 	}
-	if q := ftsQuery(f.Q); q != "" {
+	if f.Match == "substring" {
+		// The board's key/title substring (boardPreds), not FTS: finds mid-word hits and ignores the brief.
+		where = append(where, boardPreds("i", BoardFilter{Q: f.Q}, &args)...)
+	} else if q := ftsQuery(f.Q); q != "" {
 		where, args = append(where, "i.rowid IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)"), append(args, q)
 	} else if strings.TrimSpace(f.Q) != "" {
 		return []Item{}, 0, nil // only punctuation: nothing can match

@@ -686,10 +686,31 @@ export function createMockDaemon(db: MockDb = seed()): MockDaemon {
     return ok({ items, matches, roots_total: roots.length, next_cursor: next });
   }
 
-  // GET /api/items?view=flat with the picker params (docs/api-state.md): type/status narrow
-  // like the daemon's List (flat rejects chore, unlike board); q is a case-insensitive substring
-  // on key or title, a mock simplification of the daemon's FTS prefix query; limit caps the rows
-  // with the same 400s. Unfiltered, this is byte-identical to before.
+  // GET /api/items?view=flat with the picker params (docs/api-state.md), mirroring
+  // internal/items/list.go: type/status narrow like the daemon's List (flat rejects chore, unlike
+  // board); q is the FTS5 prefix query over key, title and brief (ftsMatch) unless
+  // match=substring, which is the board's case-insensitive key/title substring; rows come
+  // newest-updated first; limit caps the rows with the same 400s.
+  const foldText = (s: string) => s.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const tokensOf = (s: string) => foldText(s).match(/[\p{L}\p{N}]+/gu) ?? [];
+  // FTS5 unicode61: every whitespace word of q is a quoted prefix phrase, ANDed. A phrase's
+  // tokens must be adjacent in one column and the last one is a prefix ("EPIC-139" = epic 139*).
+  function ftsMatch(i: Item, q: string): boolean {
+    const cols = [i.key, i.title, i.brief].map(tokensOf);
+    return q
+      .split(/\s+/)
+      .map((w) => tokensOf(w.replaceAll('"', "")))
+      .filter((t) => t.length > 0)
+      .every((phrase) =>
+        cols.some((c) =>
+          c.some((_, at) =>
+            phrase.every((t, k) =>
+              k === phrase.length - 1 ? c[at + k]?.startsWith(t) : c[at + k] === t,
+            ),
+          ),
+        ),
+      );
+  }
   function flatList(q: URLSearchParams): MockResponse {
     const type = q.get("type") ?? "";
     if (type && !["epic", "story", "task", "bug", "spike"].includes(type))
@@ -709,16 +730,24 @@ export function createMockDaemon(db: MockDb = seed()): MockDaemon {
       ].includes(status)
     )
       return fail(400, "bad_request", `Unknown status "${status}".`);
-    const needle = (q.get("q") ?? "").trim().toLowerCase();
-    const list = db.items.filter(
-      (i) =>
-        i.archived_at === null &&
-        (type === "" || i.type === type) &&
-        (status === "" || i.status === status) &&
-        (needle === "" ||
-          i.key.toLowerCase().includes(needle) ||
-          i.title.toLowerCase().includes(needle)),
-    );
+    const match = q.get("match") ?? "";
+    if (match !== "" && match !== "substring")
+      return fail(400, "bad_request", "match must be substring.");
+    const text = (q.get("q") ?? "").trim();
+    const needle = text.toLowerCase();
+    const qHit = (i: Item) =>
+      match === "substring"
+        ? i.key.toLowerCase().includes(needle) || i.title.toLowerCase().includes(needle)
+        : tokensOf(text).length > 0 && ftsMatch(i, text);
+    const list = db.items
+      .filter(
+        (i) =>
+          i.archived_at === null &&
+          (type === "" || i.type === type) &&
+          (status === "" || i.status === status) &&
+          (text === "" || qHit(i)),
+      )
+      .sort((a, b) => b.updated_at - a.updated_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const ls = q.get("limit") ?? "";
     if (ls !== "") {
       const n = Number(ls);

@@ -154,6 +154,8 @@ export interface BoardItemsParams {
 export interface FlatItemsParams {
   type?: string;
   q?: string;
+  // "substring" is the board's case-insensitive key/title match; unset is the daemon's FTS.
+  match?: "substring";
   limit?: number;
 }
 

@@ -131,3 +131,39 @@ func TestTopLevelOrderIsStableOnTies(t *testing.T) {
 		}
 	}
 }
+
+// Flat q is FTS (prefix tokens over key, title and brief) unless match=substring,
+// which is the board's case-insensitive key/title substring: it finds mid-word
+// hits and ignores the brief, so brief-only matches can't crowd real ones out.
+func TestFlatSubstringMatch(t *testing.T) {
+	s := newStore(t)
+	for i := range 55 {
+		if _, err := s.Create(ctx, items.CreateInput{Type: items.Epic, Title: fmt.Sprintf("Noise %02d", i),
+			Brief: "mentions login in the brief only"}, user); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mid := mk(t, s, items.Epic, "", "Relogin form") // "login" is mid-word
+
+	got, n, err := s.List(ctx, items.ListFilter{View: "flat", Q: "LOGIN", Match: "substring"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := listKeys(got)
+	if !slices.Equal(keys, []string{mid.Key}) || n != 1 {
+		t.Fatalf("substring = %v (%d), want only %s", keys, n, mid.Key)
+	}
+
+	got, n, err = s.List(ctx, items.ListFilter{View: "flat", Q: "login"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, _ = listKeys(got)
+	if n != 55 || slices.Contains(keys, mid.Key) {
+		t.Fatalf("default flat q must stay FTS: %d matches, mid-word hit present = %v", n, slices.Contains(keys, mid.Key))
+	}
+
+	if _, _, err := s.List(ctx, items.ListFilter{View: "flat", Q: "x", Match: "regex"}); code(err) != items.CodeBadRequest {
+		t.Errorf("unknown match mode: %v", err)
+	}
+}

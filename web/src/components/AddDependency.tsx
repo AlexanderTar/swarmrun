@@ -3,7 +3,6 @@ import { errorText } from "../api";
 import { C, T } from "../copy";
 import { useConnection, useMutation } from "../data/hooks";
 import { useFlatItems } from "../data/queries";
-import { matches } from "../logic/tree";
 import { useToast } from "./Toast";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -14,9 +13,10 @@ export function AddDependency({ itemKey, disabled }: { itemKey: string; disabled
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
-  // Dependency search runs its own flat q-search (capped by the flat limit), independent of the
-  // loaded board pages, so it offers blockers outside the loaded range.
-  const found = useFlatItems(q.trim() ? { q: q.trim(), limit: 50 } : null);
+  // Dependency search runs its own flat search (the board's key/title substring, capped by the
+  // flat limit), independent of the loaded board pages, so it offers blockers outside the loaded
+  // range. The daemon filters, so the hits are shown as returned.
+  const found = useFlatItems(q.trim() ? { q: q.trim(), match: "substring", limit: 50 } : null);
   const add = useMutation(
     (api, blockedBy: string) => api.addDep(itemKey, blockedBy),
     ["items", "item:", "graph:"],
@@ -33,9 +33,7 @@ export function AddDependency({ itemKey, disabled }: { itemKey: string; disabled
     trigger.current?.focus();
   };
   const hits = q.trim()
-    ? (found.data?.items ?? [])
-        .filter((i) => i.key !== itemKey && matches(i, { q, type: "", status: "" }))
-        .slice(0, 8)
+    ? (found.data?.items ?? []).filter((i) => i.key !== itemKey).slice(0, 8)
     : [];
   const pick = async (key: string) => {
     if (!live.connected) return;

@@ -140,3 +140,25 @@ func TestFlatViewLimitAndUnchangedLists(t *testing.T) {
 		}
 	}
 }
+
+func TestFlatViewMatchSubstring(t *testing.T) {
+	e := newEnv(t)
+	e.create(map[string]any{"type": "epic", "title": "Relogin form"})
+	e.create(map[string]any{"type": "epic", "title": "Noise", "brief": "login in the brief only"})
+
+	_, b := e.api("GET", "/api/items?view=flat&q=LOGIN&match=substring&limit=50", nil)
+	flat := decode[struct {
+		Items   []itemJSON `json:"items"`
+		Matches int        `json:"matches"`
+	}](t, b)
+	if len(flat.Items) != 1 || flat.Items[0].Key != "EPIC-1" || flat.Matches != 1 {
+		t.Fatalf("substring = %+v, want only EPIC-1", flat)
+	}
+	_, b = e.api("GET", "/api/items?view=flat&q=login", nil)
+	if def := decode[struct{ Matches int }](t, b); def.Matches != 1 {
+		t.Fatalf("default flat q stays FTS (brief-only hit): %s", b)
+	}
+	if status, body := e.api("GET", "/api/items?view=flat&q=x&match=regex", nil); status != 400 || !strings.Contains(string(body), "match must be substring.") {
+		t.Fatalf("bad match = %d %s", status, body)
+	}
+}

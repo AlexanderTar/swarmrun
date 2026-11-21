@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { makeItem } from "../logic/tree";
 import type { AgentNode, Graph, Item, ItemDetail, Request } from "../types";
 import { createMockDaemon } from "./daemon";
 import { mockFetch } from "./fetch";
-import { seedPaged } from "./fixtures";
+import { NOW, seedPaged } from "./fixtures";
 
 const auth = { authorization: "Bearer mock-token" };
 const call = (
@@ -520,6 +521,28 @@ describe("mock daemon", () => {
     expect(capped.matches).toBe(d.db.items.length);
     expect(call(d, "GET", "/api/items?view=flat&type=chore")).toMatchObject({ status: 400 });
     expect(call(d, "GET", "/api/items?view=flat&limit=nope")).toMatchObject({ status: 400 });
+  });
+
+  it("flat q is the daemon's FTS prefix search unless match=substring (items/list.go)", () => {
+    const d = createMockDaemon(seedPaged());
+    d.db.items.push(
+      makeItem({ key: "EPIC-900", title: "Relogin form", updated_at: NOW - 1 }),
+      makeItem({ key: "EPIC-901", title: "Noise", brief: "mentions login only", updated_at: NOW }),
+    );
+    type Flat = { items: Item[]; matches: number };
+    const keys = (url: string) => (call(d, "GET", url).body as Flat).items.map((i) => i.key);
+    // Default: token-prefix over key, title and brief; no mid-word hits.
+    expect(keys("/api/items?view=flat&q=LOGIN")).toContain("EPIC-901");
+    expect(keys("/api/items?view=flat&q=LOGIN")).not.toContain("EPIC-900");
+    expect(keys("/api/items?view=flat&q=ogin")).toEqual([]);
+    // A key like EPIC-139 is a phrase of two tokens in the key column.
+    expect(keys("/api/items?view=flat&q=EPIC-139")).toEqual(["EPIC-139"]);
+    // Substring: the board's case-insensitive key/title match, brief ignored.
+    expect(keys("/api/items?view=flat&q=LOGIN&match=substring")).toContain("EPIC-900");
+    expect(keys("/api/items?view=flat&q=LOGIN&match=substring")).not.toContain("EPIC-901");
+    expect(call(d, "GET", "/api/items?view=flat&q=x&match=regex")).toMatchObject({ status: 400 });
+    // Newest update first, like the daemon's ORDER BY updated_at DESC, id.
+    expect(keys("/api/items?view=flat&q=login")[0]).toBe("EPIC-901");
   });
 
   it("seeds more than 30 top-level items so paging is exercised", () => {

@@ -175,7 +175,7 @@ func (s *Server) listItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	list, n, err := s.Items.List(r.Context(), items.ListFilter{View: q.Get("view"), Type: items.Type(q.Get("type")),
-		Status: items.Status(q.Get("status")), Q: q.Get("q"), Root: q.Get("root")})
+		Status: items.Status(q.Get("status")), Q: q.Get("q"), Root: q.Get("root"), Match: q.Get("match")})
 	if err != nil {
 		s.writeErr(w, err)
 		return

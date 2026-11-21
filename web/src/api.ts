@@ -185,7 +185,7 @@ export function createApi({
     flatItems: (p: FlatItemsParams = {}) =>
       call<ItemsResponse>(
         "GET",
-        `/api/items${query({ view: "flat", type: p.type, q: p.q, limit: p.limit })}`,
+        `/api/items${query({ view: "flat", type: p.type, q: p.q, match: p.match, limit: p.limit })}`,
       ),
     boardItems: (p: BoardItemsParams = {}) =>
       call<BoardItemsResponse>(

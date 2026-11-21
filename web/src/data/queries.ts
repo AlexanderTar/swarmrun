@@ -8,7 +8,7 @@ export const qk = {
   board: (q: string, type: string, status: string) =>
     `items:board:q=${q}&type=${type}&status=${status}`,
   flat: (p: FlatItemsParams) =>
-    `items:flat:type=${p.type ?? ""}&q=${p.q ?? ""}&limit=${p.limit ?? ""}`,
+    `items:flat:type=${p.type ?? ""}&q=${p.q ?? ""}&match=${p.match ?? ""}&limit=${p.limit ?? ""}`,
   item: (k: string) => `item:${k}`,
   checkpoints: (k: string) => `checkpoints:${k}`,
   graph: (k: string, s: GraphScope, h: number) => `graph:${k}:${s}:${h}`,
