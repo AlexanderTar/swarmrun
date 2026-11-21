@@ -3,6 +3,10 @@ import { useQuery } from "./hooks";
 
 export const qk = {
   items: "items" as const,
+  // Paged board pages live under the "items" prefix so every existing invalidation
+  // (SSE item events, reconnect `open`, mutations) still reaches them.
+  board: (q: string, type: string, status: string) =>
+    `items:board:q=${q}&type=${type}&status=${status}`,
   item: (k: string) => `item:${k}`,
   checkpoints: (k: string) => `checkpoints:${k}`,
   graph: (k: string, s: GraphScope, h: number) => `graph:${k}:${s}:${h}`,
@@ -17,6 +21,8 @@ export const qk = {
 };
 
 export const useItems = () => useQuery(qk.items, (a) => a.items());
+export { BOARD_PAGE, useBoardItems } from "./board";
+export type { BoardFilter, BoardResult } from "./board";
 export const useItemDetail = (key: string | null) =>
   useQuery(key && qk.item(key), (a) => a.item(key ?? ""));
 export const useCheckpoints = (key: string | null) =>

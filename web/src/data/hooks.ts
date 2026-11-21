@@ -92,6 +92,10 @@ export function useInvalidate(): (prefixes: string[]) => void {
   return useCallback((prefixes: string[]) => store.invalidate(prefixes), [store]);
 }
 
+export function useQueryStore(): QueryStore {
+  return useData().store;
+}
+
 export interface QueryResult<T> {
   data: T | undefined;
   error: unknown;
