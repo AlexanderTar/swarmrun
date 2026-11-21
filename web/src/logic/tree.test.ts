@@ -156,6 +156,12 @@ describe("tree logic (§16.5, §16.6)", () => {
     // A deep link whose tree is not loaded is not "outside" an unfiltered view (its page simply
     // has not loaded yet), but under an active filter its absence means it does not match.
     expect(outsideView("NOPE-1", items, { ...none, q: "login" }, "hierarchy", "tasks")).toBe(true);
+    // While more pages remain, an unloaded tree may simply sit on a later page — even under a
+    // filter — so it must not show the outside-view banner.
+    expect(outsideView("NOPE-1", items, { ...none, q: "login" }, "hierarchy", "tasks", true)).toBe(
+      false,
+    );
+    expect(outsideView("NOPE-1", items, none, "hierarchy", "tasks", true)).toBe(false);
     expect(outsideView("NOPE-1", items, { ...none, q: "login" }, "kanban", "tasks")).toBe(true);
     expect(outsideView("NOPE-1", items, { ...none, q: "login" }, "dependencies", "tasks")).toBe(
       false,
