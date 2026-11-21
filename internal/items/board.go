@@ -81,8 +81,9 @@ func boardPreds(alias string, f BoardFilter, args *[]any) []string {
 		where = append(where, alias+".status = ?")
 		*args = append(*args, f.Status)
 	}
-	if strings.TrimSpace(f.Q) != "" {
-		pat := "%" + escapeLike(strings.ToLower(f.Q)) + "%"
+	if q := strings.TrimSpace(f.Q); q != "" {
+		// Trimmed like the board client's filter before matching.
+		pat := "%" + escapeLike(strings.ToLower(q)) + "%"
 		where = append(where, "(LOWER("+alias+".key) LIKE ? ESCAPE '\\' OR LOWER("+alias+".title) LIKE ? ESCAPE '\\')")
 		*args = append(*args, pat, pat)
 	}

@@ -111,6 +111,135 @@ func TestBoardPagesRootsInOrder(t *testing.T) {
 	}
 }
 
+// Board filters select whole trees: q is the board's case-insensitive
+// substring on key or title (not FTS), type/status match as today, and a
+// tree is included when any item in it matches.
+func TestBoardFiltersSelectWholeTrees(t *testing.T) {
+	s := newStore(t)
+	a := mk(t, s, items.Epic, "", "Alpha project")
+	st := mk(t, s, items.Story, a.Key, "Login form")
+	mk(t, s, items.Task, st.Key, "Build form")
+	b := mk(t, s, items.Bug, "", "Crash on login")
+	t2 := mk(t, s, items.Task, b.Key, "Fix null session")
+	mk(t, s, items.Epic, "", "Unrelated")
+	c, err := s.Create(ctx, items.CreateInput{Type: items.Chore, Title: "Cleanup"}, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk(t, s, items.Task, c.Key, "Sweep")
+
+	// "LOGIN" matches the story title and the bug title; both whole trees
+	// come along, including non-matching members.
+	page, err := s.ListBoard(ctx, items.BoardFilter{Q: "LOGIN"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := boardRoots(page), []string{b.Key, a.Key}; !slices.Equal(got, want) {
+		t.Fatalf("q roots = %v, want %v", got, want)
+	}
+	if keys, _ := listKeys(page.Items); !slices.Equal(keys, []string{b.Key, t2.Key, a.Key, st.Key, "TASK-1"}) {
+		t.Fatalf("q items = %v", keys)
+	}
+	if page.Matches != 2 || page.RootsTotal != 2 {
+		t.Fatalf("q totals = %d/%d, want 2/2", page.Matches, page.RootsTotal)
+	}
+
+	// Key substring: "task-2" matches TASK-2's key, pulling in its tree.
+	keyed, err := s.ListBoard(ctx, items.BoardFilter{Q: "task-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := boardRoots(keyed); !slices.Equal(got, []string{b.Key}) {
+		t.Fatalf("key q roots = %v", got)
+	}
+	if keyed.Matches != 1 || keyed.RootsTotal != 1 {
+		t.Fatalf("key q totals = %d/%d, want 1/1", keyed.Matches, keyed.RootsTotal)
+	}
+
+	// The board client trims its filter, so padded queries match too.
+	padded, err := s.ListBoard(ctx, items.BoardFilter{Q: "  login  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := boardRoots(padded); !slices.Equal(got, []string{b.Key, a.Key}) {
+		t.Fatalf("padded q roots = %v", got)
+	}
+
+	// Not FTS: reversed words match nothing.
+	rev, err := s.ListBoard(ctx, items.BoardFilter{Q: "form login"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rev.Items) != 0 || rev.Matches != 0 || rev.RootsTotal != 0 || rev.NextCursor != "" {
+		t.Fatalf("reversed q = %+v, want empty", rev)
+	}
+
+	// Type selects trees holding that type; chore is accepted in board mode.
+	chores, err := s.ListBoard(ctx, items.BoardFilter{Type: items.Chore})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := boardRoots(chores); !slices.Equal(got, []string{c.Key}) {
+		t.Fatalf("chore roots = %v", got)
+	}
+	if chores.Matches != 1 || chores.RootsTotal != 1 {
+		t.Fatalf("chore totals = %d/%d, want 1/1", chores.Matches, chores.RootsTotal)
+	}
+
+	// Status selects trees holding that status.
+	setStatus(t, s, t2, items.Blocked)
+	blocked, err := s.ListBoard(ctx, items.BoardFilter{Status: items.Blocked})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := boardRoots(blocked); !slices.Equal(got, []string{b.Key}) {
+		t.Fatalf("blocked roots = %v", got)
+	}
+	if blocked.Matches != 1 || blocked.RootsTotal != 1 {
+		t.Fatalf("blocked totals = %d/%d, want 1/1", blocked.Matches, blocked.RootsTotal)
+	}
+
+	for _, f := range []items.BoardFilter{{Type: "saga"}, {Status: "doing"}} {
+		if _, err := s.ListBoard(ctx, f); code(err) != items.CodeBadRequest {
+			t.Errorf("%+v: err = %v", f, err)
+		}
+	}
+}
+
+// Filtered totals count across all pages: every page of a filtered listing
+// reports the same matches and roots_total, and the pages partition the trees.
+func TestBoardFilteredTotalsSpanPages(t *testing.T) {
+	s := newStore(t)
+	seedBoardRoots(t, s, 35)
+
+	seen := map[string]int{}
+	cursor := ""
+	pages := 0
+	for {
+		p, err := s.ListBoard(ctx, items.BoardFilter{Q: "root", Limit: 10, Cursor: cursor})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.RootsTotal != 35 || p.Matches != 35 {
+			t.Fatalf("page totals = %d/%d, want 35/35", p.RootsTotal, p.Matches)
+		}
+		for _, it := range p.Items {
+			seen[it.RootKey]++
+		}
+		pages++
+		if p.NextCursor == "" {
+			break
+		}
+		cursor = p.NextCursor
+		if pages > 10 {
+			t.Fatal("paging did not terminate")
+		}
+	}
+	if pages != 4 || len(seen) != 35 {
+		t.Fatalf("pages = %d over %d trees, want 4 over 35", pages, len(seen))
+	}
+}
+
 // A root created between page requests with worse precedence than the cursor
 // lands on a later page, so following next_cursor still visits every tree
 // exactly once.
