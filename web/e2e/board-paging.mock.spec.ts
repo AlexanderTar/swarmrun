@@ -47,9 +47,7 @@ test("dependencies loads every page while the graph stays visible", async ({ pag
   await page.goto("/#/dependencies");
   await expect(page.getByTestId("board-sentinel")).toHaveCount(1);
   // The canvas never scrolls, so pages chain while the sentinel stays visible.
-  await page.waitForResponse(
-    (r) => r.url().includes("/api/items") && r.url().includes("cursor="),
-  );
+  await page.waitForResponse((r) => r.url().includes("/api/items") && r.url().includes("cursor="));
   await expect(page.getByTestId("board-sentinel")).toHaveCount(0);
   await noHorizontalOverflow(page);
 });

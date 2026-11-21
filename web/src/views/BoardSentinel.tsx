@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { C } from "../copy";
 
 /**
@@ -25,7 +25,6 @@ export function BoardSentinel(p: {
   /** True only while a cursor append is in flight; a range refetch shows no row. */
   appending: boolean;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
   const live = useRef({ ...p, visible: false });
   live.current.loadMore = p.loadMore;
   live.current.hasMore = p.hasMore;
@@ -33,7 +32,8 @@ export function BoardSentinel(p: {
 
   // A load just settled with the sentinel still on screen: keep loading while the container
   // still doesn't overflow. Keyed on the true→false transition only, so the mount render and
-  // repeats while visible never fire here — the observer owns those.
+  // repeats while visible never fire here — the observer owns those. A fresh mount after an
+  // SSE-created page is covered by the observer's first report, so hasMore needs no dep here.
   const prevLoading = useRef(p.loadingMore);
   useEffect(() => {
     const was = prevLoading.current;
@@ -41,13 +41,12 @@ export function BoardSentinel(p: {
     if (!was || p.loadingMore) return;
     const s = live.current;
     if (s.visible && s.hasMore && !s.loadingMore) s.loadMore();
-  }, [p.loadingMore, p.hasMore]);
+  }, [p.loadingMore]);
 
-  // Re-attach when the element appears: the component renders null while there is no next
-  // page, so an empty-deps effect would never observe a sentinel that mounts later (e.g. an
-  // SSE-created 31st root after a range refetch).
-  useEffect(() => {
-    const el = ref.current;
+  // A callback ref, not an effect: the component renders null while there is no next page, so
+  // the observer attaches when the element mounts — including a later mount (e.g. an
+  // SSE-created 31st root after a range refetch) — and detaches via the cleanup on unmount.
+  const setNode = useCallback((el: HTMLDivElement | null) => {
     if (!el || !("IntersectionObserver" in window)) return;
     // The real scroll container, not the viewport: the section for Hierarchy/Dependencies,
     // Kanban's own scroller for Kanban.
@@ -67,18 +66,18 @@ export function BoardSentinel(p: {
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [p.hasMore]);
+  }, []);
 
   if (!p.hasMore && !p.appending) return null;
   return (
-    <div ref={ref} data-testid="board-sentinel">
+    <div ref={setNode} data-testid="board-sentinel">
       {p.appending && (
         // text-xs (0.75rem) is the DS caption size (design/tokens.css --text-caption) and the
         // codebase's helper-line convention, in muted-foreground like the header match count.
-        // role=status announces the async append to screen readers.
-        <p role="status" className="py-2 text-center text-xs text-muted-foreground">
+        // output's implicit status role announces the async append to screen readers.
+        <output className="block py-2 text-center text-xs text-muted-foreground">
           {C.loadingMore}
-        </p>
+        </output>
       )}
     </div>
   );

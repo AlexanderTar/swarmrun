@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { useBoardItems } from "../data/queries";
 import { createMockDaemon } from "../mock/daemon";
@@ -90,7 +90,7 @@ describe("BoardSentinel", () => {
     );
     const row = screen.getByTestId("board-sentinel");
     expect(row).toHaveTextContent("Loading more…");
-    expect(row.querySelector('[role="status"]')).not.toBeNull();
+    expect(within(row).getByRole("status")).toHaveTextContent("Loading more…");
     unmount();
     // A background range refetch with every page loaded shows no row.
     renderWithDaemon(
@@ -205,9 +205,7 @@ describe("view paging wires", () => {
     });
     expect(await screen.findByTestId("board-sentinel")).toBeInTheDocument();
     intersect(true);
-    await waitFor(() =>
-      expect(daemon.calls.some((c) => c.path.includes("cursor="))).toBe(true),
-    );
+    await waitFor(() => expect(daemon.calls.some((c) => c.path.includes("cursor="))).toBe(true));
     vi.unstubAllGlobals();
   });
 });

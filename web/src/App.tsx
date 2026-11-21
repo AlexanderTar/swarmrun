@@ -114,8 +114,7 @@ export function App() {
 
   const showDetails = url.item !== "" && url.view !== "inbox";
   const outside =
-    showDetails &&
-    outsideView(url.item, all, filter, url.view, url.level, board.nextCursor !== "");
+    showDetails && outsideView(url.item, all, filter, url.view, url.level, board.nextCursor !== "");
 
   return (
     <div className="flex h-dvh flex-col">
