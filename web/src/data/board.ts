@@ -106,13 +106,17 @@ export function useBoardItems(f: BoardFilter): BoardResult {
     // that follow next_cursor; the data is replaced once, from the combined result.
     let res = await api.boardItems({ ...params, limit: Math.min(want, BOARD_MAX_LIMIT) });
     let board = toBoard(res);
-    while (board.rootCount < want && res.next_cursor !== "") {
+    while (board.rootCount < want && res.next_cursor) {
+      const before = board.rootCount;
       res = await api.boardItems({
         ...params,
         cursor: res.next_cursor,
-        limit: Math.min(want - board.rootCount, BOARD_MAX_LIMIT),
+        limit: Math.min(want - before, BOARD_MAX_LIMIT),
       });
       board = toBoard(res, board);
+      // A page that adds no root can't make progress (a daemon bug or a stale cursor): stop
+      // rather than loop forever on the same cursor.
+      if (board.rootCount === before) break;
     }
     return board;
   };

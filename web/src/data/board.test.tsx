@@ -307,4 +307,48 @@ describe("useBoardItems", () => {
     ]);
     vi.unstubAllGlobals();
   });
+
+  it("a range refetch stops when a page has no next_cursor or adds no new roots", async () => {
+    const all = roots(40);
+    let mode: "ok" | "no-cursor" | "stuck" = "ok";
+    let refetchCalls = 0;
+    const fn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://test");
+      if (url.pathname === "/api/auth/me")
+        return Response.json({ origin: "local", authenticated: true });
+      if (url.pathname === "/api/bootstrap") return Response.json({ token: "t" });
+      if (mode !== "ok") refetchCalls++;
+      // Cap a runaway loop so the red run ends: after 50 calls the server says "last page".
+      const capped = refetchCalls > 50;
+      if (mode === "no-cursor") return Response.json({ items: all.slice(0, 5) });
+      return Response.json({
+        items: mode === "stuck" ? all.slice(0, 5) : all.slice(0, 30),
+        matches: all.length,
+        roots_total: all.length,
+        next_cursor: mode === "stuck" && !capped ? "same" : "",
+      });
+    });
+    vi.stubGlobal("fetch", fn as unknown as typeof fetch);
+    const api = createApi();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <DataProvider api={api} events={false}>
+        {children}
+      </DataProvider>
+    );
+    const { result } = renderHook(
+      () => ({ board: useBoardItems({ q: "", type: "", status: "" }), inv: useInvalidate() }),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.board.loaded).toBe(true));
+    for (const m of ["no-cursor", "stuck"] as const) {
+      mode = m;
+      refetchCalls = 0;
+      act(() => result.current.inv(["items"]));
+      await waitFor(() => expect(refetchCalls).toBeGreaterThan(0));
+      await waitFor(() => expect(result.current.board.loadingMore).toBe(false));
+      // One request, plus at most one more that adds nothing, then stop.
+      expect(refetchCalls).toBeLessThanOrEqual(2);
+    }
+    vi.unstubAllGlobals();
+  });
 });
