@@ -41,9 +41,13 @@ Expect well under 1 MB and a few seconds. Count nodes with `... | jq '[.agents |
   its whole non-archived subtree, ordered exactly like the web client's
   `compareTopLevel` (priority ASC, `created_at` DESC, id ASC).
 - Paging is keyset-based: `next_cursor` encodes the last root of the page, so
-  following it visits every tree exactly once even under inserts. It is `""`
-  on the last page. A bad cursor or a non-numeric limit is a 400
-  `bad_request` with a plain message.
+  following it never repeats or skips a pre-existing tree. A root created
+  ahead of the cursor (the usual case: a new root is the newest in its
+  priority group, so it sorts first) appears only on a refetch from the
+  start — the client refetches its loaded range in one request with
+  `limit` set to the loaded count. `next_cursor` is `""` on the last page.
+  A bad cursor or a non-numeric limit is a 400 `bad_request` with a plain
+  message.
 - Filters (`q`, `type`, `status`) select whole trees: a root's tree is
   included when any item in it matches. Board `q` is the board's
   case-insensitive substring on key or title, NOT the tree view's FTS query.

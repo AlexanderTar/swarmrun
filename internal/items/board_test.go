@@ -240,47 +240,77 @@ func TestBoardFilteredTotalsSpanPages(t *testing.T) {
 	}
 }
 
-// A root created between page requests with worse precedence than the cursor
-// lands on a later page, so following next_cursor still visits every tree
-// exactly once.
+// A root inserted between page requests that sorts BEFORE the cursor (the
+// usual case: a new root is the newest in its priority group, so it sorts
+// first) is missed by forward paging, but every pre-existing tree is still
+// visited exactly once: page 2 holds exactly the tail of the pre-insert
+// order. OFFSET 30 would repeat page 1's last root here, so this test pins
+// the keyset property. Roots are counted once per page, not per item.
 func TestBoardInsertBetweenPages(t *testing.T) {
 	s := newStore(t)
 	seedBoardRoots(t, s, 35)
+	want := treeRootKeys(t, s)
 
 	p1, err := s.ListBoard(ctx, items.BoardFilter{Limit: 30})
 	if err != nil {
 		t.Fatal(err)
 	}
-	worst := 3
-	if _, err := s.Create(ctx, items.CreateInput{
-		Type: items.Epic, Title: "Late root", Priority: &worst,
-	}, user); err != nil {
+	if got := boardRoots(p1); !slices.Equal(got, want[:30]) {
+		t.Fatalf("page 1 roots = %v, want %v", got, want[:30])
+	}
+	// Priority 0, created after every seed: sorts before the cursor.
+	zero := 0
+	late, err := s.Create(ctx, items.CreateInput{
+		Type: items.Epic, Title: "Late root", Priority: &zero,
+	}, user)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	seen := map[string]int{}
-	for _, it := range p1.Items {
-		seen[it.RootKey]++
-	}
 	p2, err := s.ListBoard(ctx, items.BoardFilter{Limit: 30, Cursor: p1.NextCursor})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, it := range p2.Items {
-		seen[it.RootKey]++
-	}
-	if len(seen) != 36 {
-		t.Fatalf("visited %d trees, want 36", len(seen))
-	}
-	for root, n := range seen {
-		if n == 0 {
-			t.Fatalf("tree %s never visited", root)
-		}
+	if got := boardRoots(p2); !slices.Equal(got, want[30:]) {
+		t.Fatalf("page 2 roots = %v, want %v (tail of pre-insert order)", got, want[30:])
 	}
 	if p2.NextCursor != "" {
 		t.Fatalf("next_cursor = %q, want empty on the last page", p2.NextCursor)
 	}
 	if p2.RootsTotal != 36 {
 		t.Fatalf("roots_total = %d, want 36", p2.RootsTotal)
+	}
+
+	// Each pre-existing tree is visited exactly once across the two pages;
+	// the late root sorts before the cursor so forward paging misses it.
+	seen := map[string]int{}
+	for _, k := range boardRoots(p1) {
+		seen[k]++
+	}
+	for _, k := range boardRoots(p2) {
+		seen[k]++
+	}
+	if len(seen) != 35 {
+		t.Fatalf("forward paging visited %d trees, want the 35 pre-existing ones", len(seen))
+	}
+	for _, k := range want {
+		if seen[k] != 1 {
+			t.Fatalf("tree %s visited %d times, want exactly once", k, seen[k])
+		}
+	}
+	if _, ok := seen[late.Key]; ok {
+		t.Fatalf("late root %s sorts before the cursor but was visited by forward paging", late.Key)
+	}
+
+	// A refetch from the start picks the late root up first.
+	fresh, err := s.ListBoard(ctx, items.BoardFilter{Limit: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roots := boardRoots(fresh); len(roots) == 0 || roots[0] != late.Key {
+		t.Fatalf("refetch first root = %v, want %s first", roots, late.Key)
+	}
+	if fresh.RootsTotal != 36 {
+		t.Fatalf("refetch roots_total = %d, want 36", fresh.RootsTotal)
 	}
 }

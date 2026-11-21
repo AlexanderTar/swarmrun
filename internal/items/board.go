@@ -167,6 +167,12 @@ func (s *Store) ListBoard(ctx context.Context, f BoardFilter) (BoardPage, error)
 		return BoardPage{}, err
 	}
 
+	// Enrich the page roots before assembling the page, so the assembled
+	// slice never aliases a slice that is enriched later. Descendants come
+	// back enriched from queryItems.
+	if err := s.enrich(ctx, s.DB, roots); err != nil {
+		return BoardPage{}, err
+	}
 	all := make([]Item, 0, len(roots))
 	all = append(all, roots...)
 	if len(roots) > 0 {
@@ -181,10 +187,6 @@ func (s *Store) ListBoard(ctx context.Context, f BoardFilter) (BoardPage, error)
 			return BoardPage{}, err
 		}
 		all = append(all, desc...)
-		if err := s.enrich(ctx, s.DB, roots); err != nil {
-			return BoardPage{}, err
-		}
-		copy(all, roots)
 	}
 	return BoardPage{Items: assembleTree(all), Matches: matches, RootsTotal: rootsTotal, NextCursor: next}, nil
 }
