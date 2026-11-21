@@ -12,6 +12,7 @@ import {
 import { C, T } from "../copy";
 import { PARENT_TYPES, hierarchyRows, isFilterActive } from "../logic/tree";
 import { useLocalSet } from "../state/local";
+import { BoardSentinel } from "./BoardSentinel";
 import type { HierarchyProps } from "./props";
 
 // Below sm the trailing cell keeps three fixed slots (agents, needs-you dot, add) so they line up on every row;
@@ -248,6 +249,11 @@ export function Hierarchy(p: HierarchyProps) {
           );
         })}
       </div>
+      <BoardSentinel
+        loadMore={p.paging.loadMore}
+        hasMore={p.paging.hasMore}
+        loadingMore={p.paging.loadingMore}
+      />
     </div>
   );
 }

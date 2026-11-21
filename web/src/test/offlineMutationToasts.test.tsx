@@ -39,6 +39,7 @@ function Board() {
       onReview={vi.fn()}
       onClearFilters={vi.fn()}
       onNewItem={vi.fn()}
+      paging={{ loadMore: vi.fn(), hasMore: false, loadingMore: false }}
     />
   );
 }

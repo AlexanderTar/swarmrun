@@ -12,6 +12,8 @@ import { Dependencies } from "./Dependencies";
 
 const none: Filter = { q: "", type: "", status: "" };
 
+const stubPaging = () => ({ loadMore: vi.fn(), hasMore: false, loadingMore: false });
+
 function Host(p: { selected: string; filter?: Filter; onSelect?: (k: string) => void }) {
   const items = useItems();
   if (!items.data) return null;
@@ -23,6 +25,7 @@ function Host(p: { selected: string; filter?: Filter; onSelect?: (k: string) => 
       selected={p.selected}
       connected
       onSelect={p.onSelect ?? vi.fn()}
+      paging={stubPaging()}
     />
   );
 }
@@ -185,6 +188,7 @@ describe("Dependencies view (§16.8)", () => {
               onSelect(k);
               setSel(k);
             }}
+            paging={stubPaging()}
           />
         </>
       );

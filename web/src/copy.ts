@@ -148,6 +148,9 @@ export const C = {
   flat: "Flat",
   moveTo: "Move to…",
   updating: "Updating…",
+  // Board paging: the small row at the end of a view while the next page loads. Styled like the
+  // other muted helper lines (design Type caption: --text-caption, --muted-foreground).
+  loadingMore: "Loading more…",
   scope: "Scope",
   root: "Root",
   neighbourhood: "Neighbourhood",

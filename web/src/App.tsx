@@ -6,9 +6,9 @@ import { Sheet } from "./components/Sheet";
 import { ToastProvider } from "./components/Toast";
 import { C } from "./copy";
 import { DataProvider, useConnection } from "./data/hooks";
-import { useAgents, useItems, useRequests } from "./data/queries";
+import { useAgents, useBoardItems, useRequests } from "./data/queries";
 import { needsYou } from "./logic/inbox";
-import { filterItems, isFilterActive, outsideView } from "./logic/tree";
+import { isFilterActive, outsideView } from "./logic/tree";
 import { Details } from "./panels/Details";
 import { Login } from "./panels/Login";
 import { NeedsYou } from "./panels/NeedsYou";
@@ -30,20 +30,18 @@ const EMPTY_ITEMS: Item[] = [];
 
 export function App() {
   const [url, setUrl] = useBoardUrl();
-  const items = useItems();
+  const filter = filterOf(url);
+  // Paged board pages (view=board, 30 roots at a time): the filter goes to the server, a filter
+  // change restarts from page 1, and the header count comes from the response `matches`.
+  const board = useBoardItems({ q: filter.q, type: filter.type, status: filter.status });
   const agents = useAgents();
   const requests = useRequests();
   const conn = useConnection();
   const [focus, setFocus] = useState<"agents" | undefined>();
   const [sheet, setSheet] = useState<SheetState>(null);
-  const filter = filterOf(url);
-  const all = items.data?.items ?? EMPTY_ITEMS;
+  const all = board.loaded ? board.items : EMPTY_ITEMS;
   const active = isFilterActive(filter);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: filterOf rebuilds the filter object every render; the memo is keyed on its fields so the count recomputes only when one changes
-  const matches = useMemo(
-    () => (active ? filterItems(all, filter).count : null),
-    [active, all, filter.q, filter.type, filter.status],
-  );
+  const matches = active ? board.matches : null;
 
   const select = (key: string, f?: "agents") => {
     setFocus(f);
@@ -68,11 +66,16 @@ export function App() {
 
   const viewProps: ViewProps = {
     items: all,
-    loaded: items.data !== undefined,
+    loaded: board.loaded,
     filter,
     selected: url.item,
     onSelect: select,
     connected: conn.connected,
+    paging: {
+      loadMore: board.loadMore,
+      hasMore: board.nextCursor !== "",
+      loadingMore: board.loadingMore,
+    },
   };
   const view =
     url.view === "hierarchy" ? (
@@ -114,8 +117,8 @@ export function App() {
   return (
     <div className="flex h-dvh flex-col">
       {conn.state === "closed" && <ConnectionBanner onRetry={conn.retry} />}
-      {items.error ? (
-        <ItemsErrorBanner message={errorText(items.error)} onRetry={items.reload} />
+      {board.error ? (
+        <ItemsErrorBanner message={errorText(board.error)} onRetry={board.reload} />
       ) : null}
       <Header
         url={url}
@@ -126,7 +129,7 @@ export function App() {
         onNewItem={(t) => newItem(t, url.item || undefined)}
       />
       <main className="flex min-h-0 flex-1">
-        <section data-testid="view" className="min-w-0 flex-1 overflow-auto">
+        <section data-testid="view" data-board-scroll className="min-w-0 flex-1 overflow-auto">
           {view}
         </section>
         {showDetails && (

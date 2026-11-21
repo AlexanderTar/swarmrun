@@ -1,13 +1,7 @@
 import { C } from "../copy";
 import { kebab } from "../logic/kebab";
 import { checkMove } from "../logic/transitions";
-import {
-  PARENT_TYPES,
-  ancestors,
-  buildIndex,
-  compareTopLevel,
-  makeItem,
-} from "../logic/tree";
+import { PARENT_TYPES, ancestors, buildIndex, compareTopLevel, makeItem } from "../logic/tree";
 import type { AgentEndpoint, AgentNode, Graph, Item, ItemType, Request } from "../types";
 import { type MockDb, NOW, seed } from "./fixtures";
 
@@ -670,9 +664,7 @@ export function createMockDaemon(db: MockDb = seed()): MockDaemon {
       .filter((i) => i.parent_key === null)
       .sort(compareTopLevel)
       .filter((r) => live.some((i) => i.root_key === r.key && hit(i)));
-    const matches = live.filter(
-      (i) => hit(i) && roots.some((r) => r.key === i.root_key),
-    ).length;
+    const matches = live.filter((i) => hit(i) && roots.some((r) => r.key === i.root_key)).length;
     let page = roots;
     const cursor = q.get("cursor") ?? "";
     if (cursor !== "") {
@@ -686,7 +678,8 @@ export function createMockDaemon(db: MockDb = seed()): MockDaemon {
       );
     }
     const slice = page.slice(0, limit);
-    const next = page.length > limit ? encCursor(slice[limit - 1]) : "";
+    const last = slice[limit - 1];
+    const next = page.length > limit && last ? encCursor(last) : "";
     const keys = new Set(slice.map((r) => r.key));
     // Orphans are dropped, like the daemon's assembleTree.
     const items = live.filter((i) => keys.has(i.root_key));

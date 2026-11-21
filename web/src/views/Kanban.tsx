@@ -44,6 +44,7 @@ import { checkMove, failureMessage } from "../logic/transitions";
 import { buildIndex, isFilterActive } from "../logic/tree";
 import { readJson, storage, useLocalSet, writeJson } from "../state/local";
 import type { AgentNode, Item, ItemStatus } from "../types";
+import { BoardSentinel } from "./BoardSentinel";
 import type { KanbanProps } from "./props";
 
 const LANES_KEY = "swarm.kanban.lanes";
@@ -359,6 +360,7 @@ export function Kanban(p: KanbanProps) {
       )}
       <div
         ref={scroller}
+        data-board-scroll
         onScroll={(e) =>
           writeJson(storage("localStorage"), SCROLL_KEY, {
             left: e.currentTarget.scrollLeft,
@@ -470,6 +472,11 @@ export function Kanban(p: KanbanProps) {
             );
           })}
         </div>
+        <BoardSentinel
+          loadMore={p.paging.loadMore}
+          hasMore={p.paging.hasMore}
+          loadingMore={p.paging.loadingMore}
+        />
       </div>
     </DndContext>
   );

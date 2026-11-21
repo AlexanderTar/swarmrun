@@ -40,6 +40,7 @@ function Host(p: {
       onReview={p.onReview ?? vi.fn()}
       onClearFilters={vi.fn()}
       onNewItem={vi.fn()}
+      paging={{ loadMore: vi.fn(), hasMore: false, loadingMore: false }}
     />
   );
 }
@@ -344,6 +345,7 @@ describe("Kanban view (§16.7)", () => {
         onReview={vi.fn()}
         onClearFilters={vi.fn()}
         onNewItem={vi.fn()}
+        paging={{ loadMore: vi.fn(), hasMore: false, loadingMore: false }}
       />
     );
     const { rerender } = renderWithDaemon(kanban(false), { events: false });

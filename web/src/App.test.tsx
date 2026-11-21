@@ -1,7 +1,8 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { createMockDaemon } from "./mock/daemon";
+import { seedPaged } from "./mock/fixtures";
 import { renderWithDaemon } from "./test/render";
 import { comboText, pickOption } from "./test/select";
 import type { Request } from "./types";
@@ -116,6 +117,67 @@ describe("App shell (§16.5)", () => {
     await user.click(screen.getByRole("button", { name: "Show in hierarchy" }));
     expect(window.location.hash).toBe("#/hierarchy?item=EPIC-12");
     expect(screen.queryByText("This item is outside the current view.")).not.toBeInTheDocument();
+  });
+
+  it("loads the board paged with view=board and limit=30", async () => {
+    const { daemon } = renderWithDaemon(<App />);
+    await screen.findByRole("button", { name: /Needs you/ });
+    const boards = daemon.calls.filter((c) => c.path.startsWith("/api/items?view=board"));
+    expect(boards.length).toBeGreaterThan(0);
+    expect(boards[0]).toMatchObject({ path: "/api/items?view=board&limit=30" });
+    expect(daemon.calls.some((c) => c.path.startsWith("/api/items?view=flat"))).toBe(false);
+  });
+
+  it("passes the URL filter to the server board request", async () => {
+    const { daemon, user } = renderWithDaemon(<App />);
+    await screen.findByRole("button", { name: /Needs you/ });
+    await user.type(screen.getByRole("searchbox", { name: "Search name or key…" }), "login");
+    await pickOption(user, "Type", "Tasks");
+    await pickOption(user, "Status", "In progress");
+    expect(await screen.findByText("1 matches")).toBeInTheDocument();
+    expect(
+      daemon.calls.some((c) =>
+        c.path.startsWith("/api/items?view=board&limit=30&q=login&type=task&status=in_progress"),
+      ),
+    ).toBe(true);
+  });
+
+  it("scrolling near the end of Hierarchy fetches the next page once", async () => {
+    let ioCb: ((entries: { isIntersecting: boolean }[]) => void) | null = null;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(cb: (entries: { isIntersecting: boolean }[]) => void) {
+          ioCb = cb;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    try {
+      const daemon = createMockDaemon(seedPaged());
+      renderWithDaemon(<App />, { daemon, events: false });
+      await screen.findByRole("button", { name: /Needs you/ });
+      expect(screen.getByTestId("board-sentinel")).toBeInTheDocument();
+      const before = daemon.calls.filter((c) => c.path.startsWith("/api/items?")).length;
+      // The sentinel reports its initial state first; a permanently visible sentinel never chains.
+      act(() => ioCb?.([{ isIntersecting: false }]));
+      act(() => ioCb?.([{ isIntersecting: true }]));
+      act(() => ioCb?.([{ isIntersecting: true }]));
+      await waitFor(() =>
+        expect(daemon.calls.filter((c) => c.path.startsWith("/api/items?")).length).toBe(
+          before + 1,
+        ),
+      );
+      const next = daemon.calls.filter((c) => c.path.startsWith("/api/items?")).at(-1)?.path;
+      expect(next).toContain("view=board");
+      expect(next).toContain("cursor=");
+      // The last page's roots (EPIC-30 sorts last) are on screen only after the scroll-load.
+      expect(await screen.findByRole("treeitem", { name: /^EPIC-30 / })).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("shows a banner with the daemon's reason and a working retry when items fail to load", async () => {

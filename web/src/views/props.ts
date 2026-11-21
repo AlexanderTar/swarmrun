@@ -9,13 +9,22 @@ import type {
   SpikeIntent,
 } from "../types";
 
+export interface Paging {
+  loadMore(): void;
+  /** True while the server reports another page (next_cursor is set). */
+  hasMore: boolean;
+  /** An append or range refetch is in flight with data already shown. */
+  loadingMore: boolean;
+}
+
 export interface ViewProps {
   items: Item[];
-  loaded: boolean; // false until the first GET /api/items returns; views show no empty state before that
+  loaded: boolean; // false until the first board page returns; views show no empty state before that
   filter: Filter;
   selected: string;
   onSelect(key: string, focus?: "agents"): void;
   connected: boolean;
+  paging: Paging;
 }
 
 export interface HierarchyProps extends ViewProps {

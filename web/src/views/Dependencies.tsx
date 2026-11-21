@@ -36,6 +36,7 @@ import {
 import { buildIndex } from "../logic/tree";
 import { NARROW, useMediaQuery } from "../state/media";
 import type { GraphNode, GraphScope, Item } from "../types";
+import { BoardSentinel } from "./BoardSentinel";
 import type { DependenciesProps } from "./props";
 
 function ItemNode({ data }: NodeProps<Node<ItemNodeData>>) {
@@ -279,6 +280,11 @@ function Graph(p: DependenciesProps) {
           )}
         </div>
       )}
+      <BoardSentinel
+        loadMore={p.paging.loadMore}
+        hasMore={p.paging.hasMore}
+        loadingMore={p.paging.loadingMore}
+      />
     </div>
   );
 }
