@@ -3,7 +3,6 @@ package items
 import (
 	"context"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -110,43 +109,11 @@ func (s *Store) List(ctx context.Context, f ListFilter) ([]Item, int, error) {
 		byID[it.ID] = it
 	}
 
-	children := map[string][]Item{}
-	var tops []Item
+	all := make([]Item, 0, len(byID))
 	for _, it := range byID {
-		if it.ParentID == "" {
-			tops = append(tops, it)
-		} else {
-			children[it.ParentID] = append(children[it.ParentID], it)
-		}
+		all = append(all, it)
 	}
-	sort.Slice(tops, func(i, j int) bool {
-		if tops[i].Priority != tops[j].Priority {
-			return tops[i].Priority < tops[j].Priority
-		}
-		if !tops[i].CreatedAt.Equal(tops[j].CreatedAt) {
-			return tops[i].CreatedAt.After(tops[j].CreatedAt)
-		}
-		return tops[i].ID < tops[j].ID // migrated rows share timestamps
-	})
-	out := []Item{}
-	var walk func(it Item)
-	walk = func(it Item) {
-		out = append(out, it)
-		kids := children[it.ID]
-		sort.Slice(kids, func(i, j int) bool {
-			if kids[i].SortOrder != kids[j].SortOrder {
-				return kids[i].SortOrder < kids[j].SortOrder
-			}
-			return keyNumber(kids[i].Key) < keyNumber(kids[j].Key)
-		})
-		for _, k := range kids {
-			walk(k)
-		}
-	}
-	for _, t := range tops {
-		walk(t)
-	}
-	return out, len(matches), nil
+	return assembleTree(all), len(matches), nil
 }
 
 func nonNilItems(its []Item) []Item {
