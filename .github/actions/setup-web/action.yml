@@ -3,10 +3,10 @@ description: Node, pnpm (cached store) and the frozen-lockfile install for web/.
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@v4
+    - uses: pnpm/action-setup@v6
       with:
         version: 10.25.0
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@v7
       with:
         node-version: 22
         cache: pnpm
