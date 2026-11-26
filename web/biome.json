@@ -18,6 +18,23 @@
             "inputComponents": ["Input", "Select"]
           }
         }
+      },
+      "style": {
+        "noParameterAssign": "error",
+        "noInferrableTypes": "error",
+        "noUnusedTemplateLiteral": "error",
+        "noUselessElse": "error",
+        "useDefaultParameterLast": "error",
+        "useEnumInitializers": "error",
+        "useNumberNamespace": "error",
+        "useSelfClosingElements": "error",
+        "useSingleVarDeclarator": "error"
+      },
+      "suspicious": {
+        "noVar": "error"
+      },
+      "correctness": {
+        "useJsxKeyInIterable": "error"
       }
     }
   },
