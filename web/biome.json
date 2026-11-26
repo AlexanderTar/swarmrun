@@ -19,7 +19,16 @@
           }
         }
       },
+      "complexity": {
+        "noExcessiveNestedTestSuites": "error",
+        "noForEach": "error",
+        "useWhile": "error"
+      },
+      "performance": {
+        "noDelete": "error"
+      },
       "style": {
+        "useAsConstAssertion": "error",
         "noParameterAssign": "error",
         "noInferrableTypes": "error",
         "noUnusedTemplateLiteral": "error",

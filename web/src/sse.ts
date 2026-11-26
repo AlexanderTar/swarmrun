@@ -99,7 +99,7 @@ export function connectEvents(o: EventsOptions): EventsHandle {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       const parse = createSseParser();
-      for (;;) {
+      while (true) {
         const { value, done } = await reader.read();
         if (done) break;
         for (const m of parse(decoder.decode(value, { stream: true }))) {
