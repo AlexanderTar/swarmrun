@@ -1,8 +1,8 @@
 import {
-  type ReactElement,
-  type ReactNode,
   createContext,
   createElement,
+  type ReactElement,
+  type ReactNode,
   useCallback,
   useContext,
   useEffect,
@@ -12,7 +12,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import type { Api } from "../api";
-import { type EventsHandle, connectEvents } from "../sse";
+import { connectEvents, type EventsHandle } from "../sse";
 import type { ConnState } from "../types";
 import { keysForEvent } from "./invalidate";
 import { QueryStore } from "./store";

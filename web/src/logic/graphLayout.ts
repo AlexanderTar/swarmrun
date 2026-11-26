@@ -1,6 +1,6 @@
 import { Graph as DagreGraph, layout } from "@dagrejs/dagre";
-import { MarkerType } from "@xyflow/react";
 import type { Edge, Node } from "@xyflow/react";
+import { MarkerType } from "@xyflow/react";
 import type { Filter, Graph, GraphNode, GraphScope, Item } from "../types";
 import { isFilterActive, matches } from "./tree";
 

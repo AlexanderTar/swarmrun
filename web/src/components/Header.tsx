@@ -1,13 +1,13 @@
-import { cn } from "@/lib/utils";
 import { ChevronDown, CircleUser, ListFilter, Search } from "lucide-react";
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 import { C, STATUS_LABEL, T, TYPE_LABEL, TYPE_PLURAL } from "../copy";
 import { effectiveGrouping } from "../logic/kanban";
 import { useMediaQuery } from "../state/media";
 import { useSession } from "../state/session";
 import type { BoardUrl } from "../state/url";
-import { ITEM_STATUSES } from "../types";
 import type { CardLevel, Grouping, ItemStatus, ItemType, View } from "../types";
+import { ITEM_STATUSES } from "../types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import {
@@ -47,7 +47,11 @@ const Field = ({
   label,
   className,
   children,
-}: { label: string; className: string; children: ReactNode }) => (
+}: {
+  label: string;
+  className: string;
+  children: ReactNode;
+}) => (
   // biome-ignore lint/a11y/noLabelWithoutControl: every caller passes the control it labels as children
   <label className={className}>
     {label}
@@ -200,7 +204,12 @@ function NeedsYouButton({
   onClick,
   className,
   compact,
-}: { count: number; onClick(): void; className?: string; compact?: boolean }) {
+}: {
+  count: number;
+  onClick(): void;
+  className?: string;
+  compact?: boolean;
+}) {
   return (
     <Button
       type="button"

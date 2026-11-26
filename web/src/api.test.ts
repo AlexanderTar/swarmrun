@@ -46,7 +46,7 @@ describe("createApi", () => {
       ...localMe,
       "GET /api/bootstrap": () => json({ token: `t${++tokens}` }),
       "GET /api/settings": (init) => {
-        const auth = (init?.headers as Record<string, string>).Authorization;
+        const auth = (init?.headers as Record<string, string> | undefined)?.Authorization;
         if (first) {
           first = false;
           return json({ error: { code: "unauthorized", message: "no" } }, 401);
@@ -121,7 +121,7 @@ describe("createApi", () => {
     await expect(createApi({ fetchFn: f.fn }).addDep("TASK-2", "TASK-1")).resolves.toBeUndefined();
     const call = f.calls.at(-1);
     expect(call?.init?.body).toBe(JSON.stringify({ blocked_by: "TASK-1" }));
-    expect((call?.init?.headers as Record<string, string>)["Content-Type"]).toBe(
+    expect((call?.init?.headers as Record<string, string> | undefined)?.["Content-Type"]).toBe(
       "application/json",
     );
   });

@@ -11,9 +11,9 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { errorText } from "../api";
+import { Key } from "../components/icons";
 import { Segmented } from "../components/Segmented";
 import { StatusPill } from "../components/StatusLabel";
-import { Key } from "../components/icons";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import {
@@ -26,10 +26,10 @@ import {
 import { C, T } from "../copy";
 import { useGraph } from "../data/queries";
 import {
+  dimmedKeys,
   type ItemNodeData,
   LayoutCache,
   type StoryNodeData,
-  dimmedKeys,
   storyOfFn,
   toFlow,
 } from "../logic/graphLayout";

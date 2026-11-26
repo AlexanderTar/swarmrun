@@ -1,11 +1,11 @@
-import { type RenderResult, fireEvent, render } from "@testing-library/react";
+import { fireEvent, type RenderResult, render } from "@testing-library/react";
 import userEvent, { type UserEvent } from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { vi } from "vitest";
 import { createApi } from "../api";
 import { ToastProvider } from "../components/Toast";
 import { DataProvider } from "../data/hooks";
-import { type MockDaemon, createMockDaemon } from "../mock/daemon";
+import { createMockDaemon, type MockDaemon } from "../mock/daemon";
 import { mockFetch } from "../mock/fetch";
 
 // F20: the one backoff schedule every test that spins up a real SSE connection needs (short enough

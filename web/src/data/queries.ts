@@ -62,8 +62,8 @@ export function useParentOptions(types: ItemType[]): ParentOptions {
     },
   };
 }
-export { BOARD_PAGE, useBoardItems } from "./board";
 export type { BoardFilter, BoardResult } from "./board";
+export { BOARD_PAGE, useBoardItems } from "./board";
 export const useItemDetail = (key: string | null) =>
   useQuery(key && qk.item(key), (a) => a.item(key ?? ""));
 export const useCheckpoints = (key: string | null) =>

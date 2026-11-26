@@ -3,11 +3,49 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ConnectionBanner } from "./Banners";
+import { AgentIcon, Key, TypeIcon } from "./icons";
 import { MoveToMenu } from "./MoveToMenu";
 import { Segmented } from "./Segmented";
 import { Sheet } from "./Sheet";
 import { StateDot, StatusPill } from "./StatusLabel";
-import { AgentIcon, Key, TypeIcon } from "./icons";
+
+function SheetHost() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open sheet
+      </button>
+      {open && (
+        <Sheet
+          title="Start orchestrator"
+          onClose={() => setOpen(false)}
+          footer={<button type="button">Go</button>}
+        >
+          body
+        </Sheet>
+      )}
+    </>
+  );
+}
+
+function SegmentedHost({ onChange }: { onChange: (value: "root" | "neighbourhood") => void }) {
+  const [v, setV] = useState<"root" | "neighbourhood">("root");
+  return (
+    <Segmented<"root" | "neighbourhood">
+      label="Scope"
+      value={v}
+      onChange={(value) => {
+        onChange(value);
+        setV(value);
+      }}
+      options={[
+        { value: "root", label: "Root" },
+        { value: "neighbourhood", label: "Neighbourhood" },
+      ]}
+    />
+  );
+}
 
 describe("icons and labels", () => {
   it("labels agent and type icons", () => {
@@ -101,26 +139,7 @@ describe("Sheet", () => {
 
   it("moves focus into itself on open and restores it to the trigger on close", async () => {
     const user = userEvent.setup();
-    function Host() {
-      const [open, setOpen] = useState(false);
-      return (
-        <>
-          <button type="button" onClick={() => setOpen(true)}>
-            Open sheet
-          </button>
-          {open && (
-            <Sheet
-              title="Start orchestrator"
-              onClose={() => setOpen(false)}
-              footer={<button type="button">Go</button>}
-            >
-              body
-            </Sheet>
-          )}
-        </>
-      );
-    }
-    render(<Host />);
+    render(<SheetHost />);
     const trigger = screen.getByRole("button", { name: "Open sheet" });
     trigger.focus();
     await user.click(trigger);
@@ -259,24 +278,7 @@ describe("Segmented", () => {
   it("selects an option", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    function Host() {
-      const [v, setV] = useState<"root" | "neighbourhood">("root");
-      return (
-        <Segmented<"root" | "neighbourhood">
-          label="Scope"
-          value={v}
-          onChange={(value) => {
-            onChange(value);
-            setV(value);
-          }}
-          options={[
-            { value: "root", label: "Root" },
-            { value: "neighbourhood", label: "Neighbourhood" },
-          ]}
-        />
-      );
-    }
-    render(<Host />);
+    render(<SegmentedHost onChange={onChange} />);
     expect(screen.getByRole("radio", { name: "Root" })).toHaveAttribute("aria-checked", "true");
     await user.click(screen.getByRole("radio", { name: "Neighbourhood" }));
     expect(screen.getByRole("radio", { name: "Neighbourhood" })).toHaveAttribute(

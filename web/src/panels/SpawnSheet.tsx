@@ -1,6 +1,6 @@
-import { cn } from "@/lib/utils";
 import { Loader2, TriangleAlert } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 import { errorText } from "../api";
 import { AgentFields, type AgentFieldsValue } from "../components/AgentFields";
 import { RepoPicker } from "../components/RepoPicker";
@@ -17,12 +17,12 @@ import { useAgents, useCatalog, useItemDetail, useSettings } from "../data/queri
 import { isValid, prefill, validateChoice } from "../logic/catalog";
 import { defaultOrchestratorName } from "../logic/kebab";
 import {
-  type SubmitFailure,
   mapSubmitError,
   nameError,
   newRequestId,
   orchestratorPayload,
   orchestratorsBusy,
+  type SubmitFailure,
   submitLabel,
 } from "../logic/spawnForm";
 import { startedToast } from "../logic/toasts";

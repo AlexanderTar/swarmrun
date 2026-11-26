@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Filter } from "../types";
 import {
-  LEVEL_TYPES,
-  PARENT_TYPES,
   ancestors,
   buildIndex,
   compareKeys,
@@ -10,9 +8,11 @@ import {
   filterItems,
   hierarchyRows,
   isFilterActive,
+  LEVEL_TYPES,
   makeItem,
   matches,
   outsideView,
+  PARENT_TYPES,
 } from "./tree";
 
 const none: Filter = { q: "", type: "", status: "" };

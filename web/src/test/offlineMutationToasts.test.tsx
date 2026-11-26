@@ -1,6 +1,6 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { UserEvent } from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { toast as sonner } from "sonner";
 import { describe, expect, it, vi } from "vitest";
 import { AddDependency } from "../components/AddDependency";
@@ -8,7 +8,7 @@ import { ConfirmRepos } from "../components/ConfirmRepos";
 import { RequestChanges } from "../components/RequestChanges";
 import { useConnection } from "../data/hooks";
 import { useAgents, useItems, useRequests } from "../data/queries";
-import { type MockDaemon, createMockDaemon } from "../mock/daemon";
+import { createMockDaemon, type MockDaemon } from "../mock/daemon";
 import { Details } from "../panels/Details";
 import { NewItemSheet } from "../panels/NewItemSheet";
 import { NewSpikeSheet } from "../panels/NewSpikeSheet";
@@ -16,6 +16,18 @@ import { Review } from "../panels/Review";
 import { SpawnSheet } from "../panels/SpawnSheet";
 import { Kanban } from "../views/Kanban";
 import { renderWithDaemon } from "./render";
+
+let live: ReturnType<typeof useConnection>["live"] | undefined;
+
+function UiHost({ ui }: { ui: ReactNode }) {
+  live = useConnection().live;
+  return ui;
+}
+
+function DependencyHost() {
+  live = useConnection().live;
+  return <AddDependency itemKey="TASK-103" disabled={false} />;
+}
 
 function Board() {
   const items = useItems();
@@ -238,12 +250,7 @@ describe("offline mutation toast audit", () => {
     "does not dispatch $name move from a menu opened before transport closes",
     async ({ ui, trigger }) => {
       const d = createMockDaemon();
-      let live: ReturnType<typeof useConnection>["live"] | undefined;
-      function Host() {
-        live = useConnection().live;
-        return ui;
-      }
-      const { user } = renderWithDaemon(<Host />, { daemon: d });
+      const { user } = renderWithDaemon(<UiHost ui={ui} />, { daemon: d });
       await user.click(await screen.findByRole("button", { name: trigger }));
       const item = screen.getByRole("menuitem", { name: /^Blocked/ });
       live!.connected = false;
@@ -259,12 +266,7 @@ describe("offline mutation toast audit", () => {
 
   it("does not dispatch an open dependency result after transport closes before rerender", async () => {
     const d = createMockDaemon();
-    let live: ReturnType<typeof useConnection>["live"] | undefined;
-    function Host() {
-      live = useConnection().live;
-      return <AddDependency itemKey="TASK-103" disabled={false} />;
-    }
-    const { user } = renderWithDaemon(<Host />, { daemon: d });
+    const { user } = renderWithDaemon(<DependencyHost />, { daemon: d });
     await user.click(screen.getByRole("button", { name: /Add dependency/ }));
     await user.type(screen.getByRole("searchbox", { name: "Add dependency" }), "TASK-104");
     const result = await screen.findByRole("button", { name: /TASK-104/ });

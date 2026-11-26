@@ -11,30 +11,30 @@ import {
 } from "@dnd-kit/core";
 import { ChevronDown, ChevronRight, Lock } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { AgentIcon, Key, TypeIcon } from "../components/icons";
 import { MoveToMenu } from "../components/MoveToMenu";
 import { StatusPill } from "../components/StatusLabel";
 import { useToast } from "../components/Toast";
-import { AgentIcon, Key, TypeIcon } from "../components/icons";
 import { Button } from "../components/ui/button";
 import { C, ROLE_EMOJI, STATUS_LABEL, T } from "../copy";
 import { useConnection, useMutation } from "../data/hooks";
 import { useNow } from "../data/useNow";
 import { displayState, stateLabel, stateText } from "../logic/agentActions";
 import {
-  DEFAULT_COLLAPSED_COLUMNS,
-  type Lane,
   agentLine,
   agentsByItem,
   blockedLine,
   buildLanes,
   columnCounts,
-  columnTitle,
   columnsFor,
+  columnTitle,
   crewForCard,
+  DEFAULT_COLLAPSED_COLUMNS,
   dropId,
   effectiveCollapsed,
   effectiveGrouping,
   emptyState,
+  type Lane,
   needsLine,
   parentLine,
   parseDropId,
@@ -70,6 +70,7 @@ function Card(p: {
   const blocked = blockedLine(card);
   const progress = progressLine(card);
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: same spread supplies the role; the card is the drag handle
     <div
       ref={drag.setNodeRef}
       style={style}
@@ -105,6 +106,7 @@ function Card(p: {
             {needs}
           </span>
         )}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: wrapper only stops events reaching the draggable card */}
         <span
           className={needs ? "" : "ml-auto"}
           onClick={(e) => e.stopPropagation()}
@@ -140,6 +142,7 @@ function Card(p: {
         <p className="text-muted-foreground">{stateText(p.agent.agent, now, "line")}</p>
       )}
       {p.crew && (
+        // biome-ignore lint/a11y/useAriaPropsSupportedByRole: a plain label on the crew strip, read by tests and screen readers
         <div
           aria-label="Crew"
           className="flex items-center gap-0.5 text-xs"

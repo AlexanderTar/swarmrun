@@ -40,7 +40,7 @@ describe("QueryStore", () => {
       true,
     );
     expect(s.get("a")).toMatchObject({ data: 2, loading: false });
-    expect((s.get("a")?.error as Error).message).toBe("boom");
+    expect((s.get("a")?.error as Error | undefined)?.message).toBe("boom");
   });
 
   it("refetches subscribed keys on invalidate and drops the rest", async () => {

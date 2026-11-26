@@ -9,6 +9,19 @@ import { NOW } from "../mock/fixtures";
 import { renderWithDaemon } from "../test/render";
 import { RepoPicker } from "./RepoPicker";
 
+let live: ReturnType<typeof useConnection>["live"] | undefined;
+
+function LiveHost() {
+  const connection = useConnection();
+  live = connection.live;
+  return (
+    <>
+      <Host />
+      <span data-testid="connection">{connection.connected ? "online" : "offline"}</span>
+    </>
+  );
+}
+
 function Host({ initial = [] as string[] }) {
   const [sel, setSel] = useState(initial);
   return (
@@ -241,17 +254,6 @@ describe("RepoPicker (§16.3)", () => {
     async (action) => {
       const success = vi.spyOn(sonner, "success");
       const daemon = createMockDaemon();
-      let live: ReturnType<typeof useConnection>["live"] | undefined;
-      function LiveHost() {
-        const connection = useConnection();
-        live = connection.live;
-        return (
-          <>
-            <Host />
-            <span data-testid="connection">{connection.connected ? "online" : "offline"}</span>
-          </>
-        );
-      }
       const { user } = renderWithDaemon(<LiveHost />, { daemon });
       await screen.findByRole("listbox");
       const route = action === "add" ? "POST /api/repos" : "POST /api/repos/rescan";

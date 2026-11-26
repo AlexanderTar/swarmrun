@@ -1,13 +1,13 @@
 import { C, STATUS_LABEL, T, TYPE_PLURAL } from "../copy";
-import { ITEM_STATUSES } from "../types";
 import type { AgentNode, CardLevel, Filter, Grouping, Item, ItemStatus, Role } from "../types";
+import { ITEM_STATUSES } from "../types";
 import { flattenAgents, isFinished } from "./agentActions";
 import {
-  LEVEL_TYPES,
   ancestors,
   buildIndex,
   compareChildren,
   isFilterActive,
+  LEVEL_TYPES,
   matches,
 } from "./tree";
 

@@ -1,4 +1,4 @@
-import { type Page, expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { noHorizontalOverflow } from "./helpers";
 
 const topRows = (page: Page) => page.locator('[role="treeitem"][aria-level="1"]');

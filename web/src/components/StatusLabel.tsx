@@ -38,15 +38,20 @@ export function StateDot({
   state,
   withLabel = false,
   text,
-}: { state: DisplayState; withLabel?: boolean; text?: string }) {
+}: {
+  state: DisplayState;
+  withLabel?: boolean;
+  text?: string;
+}) {
   const label = text ?? stateLabel(state);
+  const dotClass = `mt-1.5 inline-block size-2 shrink-0 rounded-full ${DOT[stateTone(state)]}`;
   return (
     <span className="inline-flex items-start gap-1.5">
-      <span
-        aria-label={withLabel ? undefined : label}
-        role={withLabel ? undefined : "img"}
-        className={`mt-1.5 inline-block size-2 shrink-0 rounded-full ${DOT[stateTone(state)]}`}
-      />
+      {withLabel ? (
+        <span className={dotClass} />
+      ) : (
+        <span role="img" aria-label={label} className={dotClass} />
+      )}
       {withLabel && <span className="text-muted-foreground">{label}</span>}
     </span>
   );

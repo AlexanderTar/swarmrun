@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ITEM_STATUSES } from "./types";
 import type { ApproveBody, Item, Request } from "./types";
+import { ITEM_STATUSES } from "./types";
 
 describe("types", () => {
   it("lists statuses in the §16.7 column order", () => {

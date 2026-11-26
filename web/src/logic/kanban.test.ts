@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { Filter } from "../types";
 import { makeAgent } from "./agentActions";
 import {
-  DEFAULT_COLLAPSED_COLUMNS,
   agentLine,
   agentsByItem,
   blockedLine,
   buildLanes,
   columnCounts,
-  columnTitle,
   columnsFor,
+  columnTitle,
   crewForCard,
+  DEFAULT_COLLAPSED_COLUMNS,
   dropId,
   effectiveCollapsed,
   effectiveGrouping,

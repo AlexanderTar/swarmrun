@@ -1,5 +1,5 @@
 import { screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { makeItem } from "../logic/tree";
 import { createMockDaemon } from "../mock/daemon";
 import { NOW, seedPaged } from "../mock/fixtures";

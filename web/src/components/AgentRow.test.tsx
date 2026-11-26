@@ -8,6 +8,19 @@ import { renderWithDaemon } from "../test/render";
 import type { SessionState } from "../types";
 import { AgentList, AgentRow } from "./AgentRow";
 
+let live: ReturnType<typeof useConnection>["live"] | undefined;
+
+function RowWithLifecycle() {
+  const connection = useConnection();
+  live = connection.live;
+  return (
+    <>
+      <AgentRow agent={makeAgent({ name: "login-form-coder", session: ses("running") })} />
+      <span data-testid="connection">{connection.connected ? "online" : "offline"}</span>
+    </>
+  );
+}
+
 const streamState = vi.hoisted(() => ({ current: "connecting" }));
 vi.mock("../sse", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../sse")>();
@@ -371,17 +384,6 @@ describe("AgentRow (§10.7 on the board)", () => {
           body: { error: { code: "conflict", message: "Still stopping." } },
         });
       const release = d.hold(route);
-      let live: ReturnType<typeof useConnection>["live"] | undefined;
-      function RowWithLifecycle() {
-        const connection = useConnection();
-        live = connection.live;
-        return (
-          <>
-            <AgentRow agent={makeAgent({ name: "login-form-coder", session: ses("running") })} />
-            <span data-testid="connection">{connection.connected ? "online" : "offline"}</span>
-          </>
-        );
-      }
       const { user } = renderWithDaemon(<RowWithLifecycle />, { daemon: d });
       await user.click(screen.getByRole("button", { name: "Pause" }));
       await waitFor(() => expect(screen.getByRole("button", { name: "Pausing…" })).toBeDisabled());

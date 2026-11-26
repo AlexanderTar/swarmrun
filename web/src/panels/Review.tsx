@@ -14,13 +14,13 @@ import { useInvalidate, useMutation, useQuery } from "../data/hooks";
 import { useArtifact, useCheckpoints, useItemDetail } from "../data/queries";
 import { ARTIFACT_LABEL } from "../logic/requestTitle";
 import {
-  SCOPE_LABEL,
   agentOptions,
   approveBody,
   closeResolution,
   gitBindingLine,
   isApprovalKind,
   reviewHeader,
+  SCOPE_LABEL,
 } from "../logic/review";
 import { verifyLine } from "../logic/timeline";
 import type { AcceptBinding, MergeChoice, Request } from "../types";

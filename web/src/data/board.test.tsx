@@ -8,6 +8,25 @@ import { BoardSentinel } from "../views/BoardSentinel";
 import { DataProvider, useInvalidate } from "./hooks";
 import { useBoardItems } from "./queries";
 
+function Host() {
+  const b = useBoardItems({ q: "", type: "", status: "" });
+  return (
+    <div>
+      <span data-testid="roots">{b.rootCount}</span>
+      <span data-testid="err">{b.error ? "error" : ""}</span>
+      <button type="button" onClick={b.reload}>
+        retry
+      </button>
+      <BoardSentinel
+        loadMore={b.loadMore}
+        hasMore={b.nextCursor !== ""}
+        loadingMore={b.loadingMore}
+        appending={b.appending}
+      />
+    </div>
+  );
+}
+
 const roots = (n: number, off = 0): Item[] =>
   Array.from({ length: n }, (_, i) =>
     makeItem({
@@ -220,24 +239,6 @@ describe("useBoardItems", () => {
       },
     );
     const api = createApi();
-    function Host() {
-      const b = useBoardItems({ q: "", type: "", status: "" });
-      return (
-        <div>
-          <span data-testid="roots">{b.rootCount}</span>
-          <span data-testid="err">{b.error ? "error" : ""}</span>
-          <button type="button" onClick={b.reload}>
-            retry
-          </button>
-          <BoardSentinel
-            loadMore={b.loadMore}
-            hasMore={b.nextCursor !== ""}
-            loadingMore={b.loadingMore}
-            appending={b.appending}
-          />
-        </div>
-      );
-    }
     render(
       <DataProvider api={api} events={false}>
         <Host />

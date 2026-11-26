@@ -11,6 +11,49 @@ import { pickOption } from "../test/select";
 import type { Filter, Item } from "../types";
 import { Dependencies } from "./Dependencies";
 
+function Picking(p: { items: Item[]; onSelect: (k: string) => void }) {
+  const [sel, setSel] = useState("");
+  return (
+    <Dependencies
+      items={p.items}
+      loaded
+      filter={none}
+      selected={sel}
+      connected
+      onSelect={(k) => {
+        p.onSelect(k);
+        setSel(k);
+      }}
+      paging={stubPaging()}
+    />
+  );
+}
+
+function Closable({ onSelect }: { onSelect: (k: string) => void }) {
+  const [sel, setSel] = useState("");
+  const items = useItems();
+  if (!items.data) return null;
+  return (
+    <>
+      <button type="button" onClick={() => setSel("")}>
+        Close details
+      </button>
+      <Dependencies
+        items={items.data.items}
+        loaded
+        filter={none}
+        selected={sel}
+        connected
+        onSelect={(k) => {
+          onSelect(k);
+          setSel(k);
+        }}
+        paging={stubPaging()}
+      />
+    </>
+  );
+}
+
 const none: Filter = { q: "", type: "", status: "" };
 
 const stubPaging = () => ({
@@ -189,26 +232,9 @@ describe("Dependencies view (§16.8)", () => {
       blocked_by: ["TASK-903"],
     });
     const onSelect = vi.fn();
-    function Picking(p: { items: Item[] }) {
-      const [sel, setSel] = useState("");
-      return (
-        <Dependencies
-          items={p.items}
-          loaded
-          filter={none}
-          selected={sel}
-          connected
-          onSelect={(k) => {
-            onSelect(k);
-            setSel(k);
-          }}
-          paging={stubPaging()}
-        />
-      );
-    }
-    const r = renderWithDaemon(<Picking items={[lonely]} />, { events: false });
+    const r = renderWithDaemon(<Picking items={[lonely]} onSelect={onSelect} />, { events: false });
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith("EPIC-900"));
-    r.rerender(<Picking items={[lonely, edgeful, waiter]} />);
+    r.rerender(<Picking items={[lonely, edgeful, waiter]} onSelect={onSelect} />);
     await act(async () => {
       await new Promise((res) => setTimeout(res, 100));
     });
@@ -217,31 +243,7 @@ describe("Dependencies view (§16.8)", () => {
 
   it("does not re-select a root after the selection is closed, and keeps the graph", async () => {
     const onSelect = vi.fn();
-    function Closable() {
-      const [sel, setSel] = useState("");
-      const items = useItems();
-      if (!items.data) return null;
-      return (
-        <>
-          <button type="button" onClick={() => setSel("")}>
-            Close details
-          </button>
-          <Dependencies
-            items={items.data.items}
-            loaded
-            filter={none}
-            selected={sel}
-            connected
-            onSelect={(k) => {
-              onSelect(k);
-              setSel(k);
-            }}
-            paging={stubPaging()}
-          />
-        </>
-      );
-    }
-    const { user } = renderWithDaemon(<Closable />, { events: false });
+    const { user } = renderWithDaemon(<Closable onSelect={onSelect} />, { events: false });
     await screen.findByText("No dependencies for this item.");
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith("EPIC-12");

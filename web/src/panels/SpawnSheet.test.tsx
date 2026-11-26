@@ -208,7 +208,6 @@ describe("SpawnSheet (§16.10)", () => {
     });
     const sheet = await screen.findByRole("dialog", { name: "Start orchestrator" });
     await user.click(within(sheet).getByRole("button", { name: "Worker Roles" }));
-    const coderGroup = within(sheet).getByRole("group", { name: "Coder" });
     await pickOption(user, "Coder Model", "Opus (latest)");
     await user.click(within(sheet).getByRole("button", { name: "Start orchestrator" }));
     await waitFor(() => expect(onClose).toHaveBeenCalled());

@@ -1,3 +1,4 @@
+import { type CSSProperties, type ReactNode, useRef } from "react";
 import {
   SheetContent,
   SheetDescription,
@@ -7,7 +8,6 @@ import {
   Sheet as UiSheet,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
-import { type CSSProperties, type ReactNode, useRef } from "react";
 
 export function Sheet(p: {
   title: string;

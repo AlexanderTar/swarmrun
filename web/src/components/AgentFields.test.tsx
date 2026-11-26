@@ -11,7 +11,10 @@ import { AgentFields, type AgentFieldsValue } from "./AgentFields";
 function Host({
   catalog,
   initial,
-}: { catalog?: AgentCatalogEntry[]; initial?: Partial<AgentFieldsValue["choice"]> }) {
+}: {
+  catalog?: AgentCatalogEntry[];
+  initial?: Partial<AgentFieldsValue["choice"]>;
+}) {
   const db = seed();
   const start = prefill(db.settings);
   const [v, setV] = useState<AgentFieldsValue>({

@@ -1,3 +1,4 @@
+import { type FormEvent, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,7 +11,6 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { type FormEvent, useState } from "react";
 import { ApiError, errorText } from "../api";
 import { C } from "../copy";
 
@@ -23,7 +23,10 @@ function loginError(e: unknown): string {
 export function Login({
   login,
   onSignedIn,
-}: { login: (email: string, password: string) => Promise<void>; onSignedIn: () => void }) {
+}: {
+  login: (email: string, password: string) => Promise<void>;
+  onSignedIn: () => void;
+}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [pending, setPending] = useState(false);

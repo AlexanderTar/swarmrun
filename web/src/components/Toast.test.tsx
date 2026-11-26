@@ -7,6 +7,48 @@ import { createApi } from "../api";
 import { DataProvider, useConnection } from "../data/hooks";
 import { ToastProvider, useToast } from "./Toast";
 
+let live: ReturnType<typeof useConnection>["live"] | undefined;
+
+function CompletionToast({ held, failure }: { held: Promise<void>; failure: boolean }) {
+  const toast = useToast();
+  live = useConnection().live;
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void held.then(() => (failure ? toast.error("Failed") : toast.success("Done")));
+      }}
+    >
+      Start
+    </button>
+  );
+}
+
+function OfflineToast() {
+  const toast = useToast();
+  live = useConnection().live;
+  return (
+    <button type="button" onClick={() => toast({ message: "Offline refusal" })}>
+      Refuse
+    </button>
+  );
+}
+
+function StaleToast({ held }: { held: Promise<void> }) {
+  const toast = useToast();
+  live = useConnection().live;
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        void held.then(() => toast.success("Stale completion"));
+      }}
+    >
+      Start
+    </button>
+  );
+}
+
 function Trigger({ onAction }: { onAction: () => void }) {
   const toast = useToast();
   return (
@@ -53,30 +95,15 @@ describe("Toast (Sonner)", () => {
     async ({ failure, reconnect }) => {
       const success = vi.spyOn(sonner, "success");
       const error = vi.spyOn(sonner, "error");
-      let live: ReturnType<typeof useConnection>["live"] | undefined;
       let release = () => {};
       const held = new Promise<void>((resolve) => {
         release = resolve;
       });
-      function PendingToast() {
-        const toast = useToast();
-        live = useConnection().live;
-        return (
-          <button
-            type="button"
-            onClick={() => {
-              void held.then(() => (failure ? toast.error("Failed") : toast.success("Done")));
-            }}
-          >
-            Start
-          </button>
-        );
-      }
       const user = userEvent.setup();
       render(
         <DataProvider api={createApi()} events={false}>
           <ToastProvider>
-            <PendingToast />
+            <CompletionToast held={held} failure={failure} />
           </ToastProvider>
         </DataProvider>,
       );
@@ -95,16 +122,6 @@ describe("Toast (Sonner)", () => {
   );
 
   it("drops a toast from an offline click before React rerenders", async () => {
-    let live: ReturnType<typeof useConnection>["live"] | undefined;
-    function OfflineToast() {
-      const toast = useToast();
-      live = useConnection().live;
-      return (
-        <button type="button" onClick={() => toast({ message: "Offline refusal" })}>
-          Refuse
-        </button>
-      );
-    }
     const user = userEvent.setup();
     render(
       <DataProvider api={createApi()} events={false}>
@@ -120,30 +137,15 @@ describe("Toast (Sonner)", () => {
 
   it("drops a held action started during an offline render when transport reconnects", async () => {
     const success = vi.spyOn(sonner, "success");
-    let live: ReturnType<typeof useConnection>["live"] | undefined;
     let release = () => {};
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    function PendingToast() {
-      const toast = useToast();
-      live = useConnection().live;
-      return (
-        <button
-          type="button"
-          onClick={() => {
-            void held.then(() => toast.success("Stale completion"));
-          }}
-        >
-          Start
-        </button>
-      );
-    }
     const api = createApi();
     const ui = () => (
       <DataProvider api={api} events={false}>
         <ToastProvider>
-          <PendingToast />
+          <StaleToast held={held} />
         </ToastProvider>
       </DataProvider>
     );

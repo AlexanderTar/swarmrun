@@ -4,7 +4,6 @@ import { C, ROLE_LABEL } from "../copy";
 import {
   type AdvisorChoice,
   type AgentChoice,
-  type Option,
   advisorAgentOptions,
   advisorModelOptions,
   agentOptions,
@@ -16,6 +15,7 @@ import {
   entryFor,
   modelOptions,
   normalizeEffort,
+  type Option,
   resolveModel,
   validateChoice,
 } from "../logic/catalog";

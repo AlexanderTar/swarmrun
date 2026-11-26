@@ -1,3 +1,7 @@
+import { render } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
+import { describe, expect, it } from "vitest";
 import {
   Select,
   SelectContent,
@@ -5,10 +9,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { useState } from "react";
-import { describe, expect, it } from "vitest";
 import { comboText, optionTexts, pickOption } from "./select";
 
 function Host() {

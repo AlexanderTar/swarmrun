@@ -1,13 +1,4 @@
-import type {
-  AgentNode,
-  CardLevel,
-  Filter,
-  Grouping,
-  Item,
-  ItemType,
-  Request,
-  SpikeIntent,
-} from "../types";
+import type { AgentNode, CardLevel, Filter, Grouping, Item, Request, SpikeIntent } from "../types";
 
 export interface Paging {
   loadMore(): void;

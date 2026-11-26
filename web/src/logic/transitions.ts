@@ -1,7 +1,7 @@
 import { ApiError, errorText } from "../api";
 import { C, STATUS_LABEL, T } from "../copy";
-import { ITEM_STATUSES } from "../types";
 import type { Item, ItemStatus } from "../types";
+import { ITEM_STATUSES } from "../types";
 
 export type Movable = Pick<Item, "key" | "type" | "status" | "status_before_block">;
 export type MoveCheck = { ok: true } | { ok: false; reason: string; special?: "accept" | "spike" };

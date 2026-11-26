@@ -1,7 +1,7 @@
 import { C } from "../copy";
 import { kebab } from "../logic/kebab";
 import { checkMove } from "../logic/transitions";
-import { PARENT_TYPES, ancestors, buildIndex, compareTopLevel, makeItem } from "../logic/tree";
+import { ancestors, buildIndex, compareTopLevel, makeItem, PARENT_TYPES } from "../logic/tree";
 import type { AgentEndpoint, AgentNode, Graph, Item, ItemType, Request } from "../types";
 import { type MockDb, NOW, seed } from "./fixtures";
 

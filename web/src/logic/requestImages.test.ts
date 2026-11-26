@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  addImages,
   type Deps,
   MAX_IMAGES,
-  addImages,
   prepareImage,
   sniff,
   toAttachment,

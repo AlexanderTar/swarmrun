@@ -31,7 +31,6 @@ function Lines({ title, lines }: { title: string; lines: string[] }) {
 
 function CheckpointRow({ c }: { c: Checkpoint }) {
   return (
-    // biome-ignore lint/a11y/useSemanticElements: Collapsible renders a div; a fieldset would add its own border and layout
     <Collapsible role="group" className="rounded border border-border p-2">
       <CollapsibleTrigger asChild>
         <Button
@@ -96,7 +95,6 @@ export function CheckpointList({ itemKey, agentNames }: { itemKey: string; agent
         e.kind === "checkpoint" ? (
           <CheckpointRow key={e.checkpoint.id} c={e.checkpoint} />
         ) : (
-          // biome-ignore lint/a11y/useSemanticElements: Collapsible renders a div; a fieldset would add its own border and layout
           <Collapsible key={e.advice.id} role="group" className="rounded border border-border p-2">
             <CollapsibleTrigger asChild>
               <Button

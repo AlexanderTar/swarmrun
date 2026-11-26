@@ -10,6 +10,65 @@ import { Dependencies } from "./Dependencies";
 import { Hierarchy } from "./Hierarchy";
 import { Kanban } from "./Kanban";
 
+function HierarchyHost() {
+  const board = useBoardItems(none);
+  if (!board.loaded) return null;
+  return (
+    <Hierarchy
+      items={board.items}
+      loaded
+      filter={none}
+      selected=""
+      connected
+      onSelect={vi.fn()}
+      onAddChild={vi.fn()}
+      onNewItem={vi.fn()}
+      onClearFilters={vi.fn()}
+      paging={livePaging(board)}
+    />
+  );
+}
+
+function KanbanHost() {
+  const board = useBoardItems(none);
+  if (!board.loaded) return null;
+  return (
+    <Kanban
+      items={board.items}
+      loaded
+      agents={[]}
+      requests={[]}
+      filter={none}
+      selected=""
+      connected
+      level="tasks"
+      group="root"
+      onSelect={vi.fn()}
+      onLevel={vi.fn()}
+      onReview={vi.fn()}
+      onClearFilters={vi.fn()}
+      onNewItem={vi.fn()}
+      paging={livePaging(board)}
+    />
+  );
+}
+
+function DependenciesHost() {
+  const board = useBoardItems(none);
+  if (!board.loaded) return null;
+  return (
+    <Dependencies
+      items={board.items}
+      loaded
+      filter={none}
+      selected="EPIC-12"
+      connected
+      onSelect={vi.fn()}
+      paging={livePaging(board)}
+    />
+  );
+}
+
 type Entry = { isIntersecting: boolean };
 let ioCb: ((entries: Entry[]) => void) | null = null;
 
@@ -33,17 +92,6 @@ function stubIO() {
 
 const intersect = (v: boolean) => act(() => ioCb?.([{ isIntersecting: v }]));
 const none: Filter = { q: "", type: "", status: "" };
-const paging = (
-  p: Partial<{ hasMore: boolean; loadingMore: boolean; appending: boolean }> = {},
-) => ({
-  loadMore: vi.fn(),
-  hasMore: false,
-  loadingMore: false,
-  appending: false,
-  rootsTotal: 0,
-  rootCount: 0,
-  ...p,
-});
 const livePaging = (b: {
   loadMore(): void;
   nextCursor: string;
@@ -152,25 +200,7 @@ describe("BoardSentinel", () => {
 describe("view paging wires", () => {
   it("Hierarchy intersection fetches the next page once", async () => {
     stubIO();
-    function Host() {
-      const board = useBoardItems(none);
-      if (!board.loaded) return null;
-      return (
-        <Hierarchy
-          items={board.items}
-          loaded
-          filter={none}
-          selected=""
-          connected
-          onSelect={vi.fn()}
-          onAddChild={vi.fn()}
-          onNewItem={vi.fn()}
-          onClearFilters={vi.fn()}
-          paging={livePaging(board)}
-        />
-      );
-    }
-    renderWithDaemon(<Host />, { daemon: createMockDaemon(seedPaged()), events: false });
+    renderWithDaemon(<HierarchyHost />, { daemon: createMockDaemon(seedPaged()), events: false });
     expect(await screen.findByTestId("board-sentinel")).toBeInTheDocument();
     // EPIC-30 sorts last, so it rides on the second page only.
     expect(screen.queryByRole("treeitem", { name: /^EPIC-30 / })).not.toBeInTheDocument();
@@ -182,30 +212,7 @@ describe("view paging wires", () => {
 
   it("Kanban intersection fetches the next page once in its own scroller", async () => {
     stubIO();
-    function Host() {
-      const board = useBoardItems(none);
-      if (!board.loaded) return null;
-      return (
-        <Kanban
-          items={board.items}
-          loaded
-          agents={[]}
-          requests={[]}
-          filter={none}
-          selected=""
-          connected
-          level="tasks"
-          group="root"
-          onSelect={vi.fn()}
-          onLevel={vi.fn()}
-          onReview={vi.fn()}
-          onClearFilters={vi.fn()}
-          onNewItem={vi.fn()}
-          paging={livePaging(board)}
-        />
-      );
-    }
-    renderWithDaemon(<Host />, { daemon: createMockDaemon(seedPaged()), events: false });
+    renderWithDaemon(<KanbanHost />, { daemon: createMockDaemon(seedPaged()), events: false });
     expect(await screen.findByTestId("board-sentinel")).toBeInTheDocument();
     expect(screen.queryByTestId("lane-EPIC-30")).not.toBeInTheDocument();
     intersect(true);
@@ -214,22 +221,7 @@ describe("view paging wires", () => {
   });
 
   it("Dependencies loads the next page from its load-more control", async () => {
-    function Host() {
-      const board = useBoardItems(none);
-      if (!board.loaded) return null;
-      return (
-        <Dependencies
-          items={board.items}
-          loaded
-          filter={none}
-          selected="EPIC-12"
-          connected
-          onSelect={vi.fn()}
-          paging={livePaging(board)}
-        />
-      );
-    }
-    const { daemon, user } = renderWithDaemon(<Host />, {
+    const { daemon, user } = renderWithDaemon(<DependenciesHost />, {
       daemon: createMockDaemon(seedPaged()),
       events: false,
     });

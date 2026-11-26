@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { type KeyboardEvent, useRef, useState } from "react";
-import { StatusPill } from "../components/StatusLabel";
 import { Key, TypeIcon } from "../components/icons";
+import { StatusPill } from "../components/StatusLabel";
 import { Button } from "../components/ui/button";
 import {
   DropdownMenu,
@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "../components/ui/dropdown-menu";
 import { C, T } from "../copy";
-import { PARENT_TYPES, hierarchyRows, isFilterActive } from "../logic/tree";
+import { hierarchyRows, isFilterActive, PARENT_TYPES } from "../logic/tree";
 import { useLocalSet } from "../state/local";
 import { BoardSentinel } from "./BoardSentinel";
 import type { HierarchyProps } from "./props";
@@ -98,7 +98,6 @@ export function Hierarchy(p: HierarchyProps) {
         ref={tree}
         role="tree"
         aria-label={C.hierarchy}
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: the tree container takes focus and moves the selection with the arrow keys
         tabIndex={0}
         onKeyDown={onKeyDown}
         className="rounded outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -122,6 +121,7 @@ export function Hierarchy(p: HierarchyProps) {
               {/* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard selection is handled by onKeyDown on the tree container */}
               <div
                 role="treeitem"
+                tabIndex={-1}
                 aria-label={`${it.key} ${it.title}`}
                 aria-level={r.depth + 1}
                 aria-expanded={r.hasChildren ? r.expanded : undefined}

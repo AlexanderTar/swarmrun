@@ -1,5 +1,5 @@
 import type { CreateItemBody, Item, ItemType } from "../types";
-import { PARENT_TYPES as TREE_PARENT_TYPES, compareKeys } from "./tree";
+import { compareKeys, PARENT_TYPES as TREE_PARENT_TYPES } from "./tree";
 
 export type NewType = "epic" | "bug" | "story" | "task";
 

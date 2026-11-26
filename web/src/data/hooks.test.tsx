@@ -4,9 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import { createApi } from "../api";
 import { createMockDaemon } from "../mock/daemon";
 import { mockFetch } from "../mock/fetch";
-import { TEST_BACKOFF, renderWithDaemon } from "../test/render";
+import { renderWithDaemon, TEST_BACKOFF } from "../test/render";
 import { DataProvider, useConnection, useMutation, useQuery } from "./hooks";
 import { qk, useItems } from "./queries";
+
+function Probe() {
+  const items = useItems();
+  return <p>{items.data ? `${items.data.items.length} items at ${window.location.hash}` : "…"}</p>;
+}
 
 function setup(events = true) {
   const daemon = createMockDaemon();
@@ -94,12 +99,6 @@ describe("data hooks", () => {
   });
 
   it("renderWithDaemon wires providers and the hash", async () => {
-    function Probe() {
-      const items = useItems();
-      return (
-        <p>{items.data ? `${items.data.items.length} items at ${window.location.hash}` : "…"}</p>
-      );
-    }
     renderWithDaemon(<Probe />, { hash: "#/kanban" });
     expect(await screen.findByText(/items at #\/kanban/)).toBeInTheDocument();
   });

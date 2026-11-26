@@ -24,9 +24,9 @@ import {
 import { agentActionToast } from "../logic/toasts";
 import { useSession } from "../state/session";
 import type { AgentEndpoint, AgentNode } from "../types";
+import { AgentIcon } from "./icons";
 import { StateDot } from "./StatusLabel";
 import { useToast } from "./Toast";
-import { AgentIcon } from "./icons";
 import {
   AlertDialog,
   AlertDialogAction,

@@ -1,14 +1,22 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "organizeImports": { "enabled": true },
+  "$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "a11y": {
         "noLabelWithoutControl": {
           "level": "error",
-          "options": { "inputComponents": ["Input", "Select"] }
+          "options": {
+            "inputComponents": ["Input", "Select"]
+          }
         }
       }
     }
@@ -21,20 +29,32 @@
   },
   "overrides": [
     {
-      "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "e2e/**"],
-      "linter": { "rules": { "style": { "noNonNullAssertion": "off" } } }
+      "includes": ["**/src/**/*.test.ts", "**/src/**/*.test.tsx", "**/e2e/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
     }
   ],
   "files": {
-    "ignore": [
-      "**/dist/**",
-      "**/.next/**",
-      "**/node_modules/**",
-      "**/out/**",
-      "**/src/components/ui/**",
-      "**/coverage/**",
-      "**/playwright-report/**",
-      "**/test-results/**"
+    "includes": [
+      "**",
+      "!**/dist",
+      "!**/.next",
+      "!**/node_modules",
+      "!**/out",
+      "!**/src/components/ui",
+      "!**/coverage",
+      "!**/playwright-report",
+      "!**/test-results"
     ]
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
   }
 }

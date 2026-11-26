@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { ITEM_STATUSES } from "../types";
 import type {
   CardLevel,
   Filter,
@@ -9,6 +8,7 @@ import type {
   ItemType,
   View,
 } from "../types";
+import { ITEM_STATUSES } from "../types";
 
 export interface BoardUrl {
   view: View;

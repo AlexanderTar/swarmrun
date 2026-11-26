@@ -1,7 +1,6 @@
 import { ChevronRight } from "lucide-react";
 import { ROLE_EMOJI, ROLE_LABEL } from "../copy";
-import type { ItemDetail, Workflow } from "../types";
-import type { Role, WorkflowFinding } from "../types";
+import type { ItemDetail, Role, Workflow, WorkflowFinding } from "../types";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 

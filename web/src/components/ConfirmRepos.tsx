@@ -20,7 +20,12 @@ function Rows({
   rows,
   checked,
   onToggle,
-}: { title: string; rows: ConfirmRow[]; checked: string[]; onToggle(id: string): void }) {
+}: {
+  title: string;
+  rows: ConfirmRow[];
+  checked: string[];
+  onToggle(id: string): void;
+}) {
   if (rows.length === 0) return null;
   return (
     <fieldset className="space-y-1">

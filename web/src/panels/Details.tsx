@@ -8,7 +8,6 @@ import { MergeList } from "../components/MergeList";
 import { MoveToMenu } from "../components/MoveToMenu";
 import { useToast } from "../components/Toast";
 import { TodoList } from "../components/TodoList";
-import { WorkflowSection } from "../components/WorkflowSection";
 import { Alert } from "../components/ui/alert";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -22,6 +21,7 @@ import {
 } from "../components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { Textarea } from "../components/ui/textarea";
+import { WorkflowSection } from "../components/WorkflowSection";
 import { C, STATUS_LABEL, T, TYPE_LABEL } from "../copy";
 import { useConnection, useInvalidate, useMutation } from "../data/hooks";
 import { qk, useItemDetail } from "../data/queries";
@@ -164,6 +164,7 @@ export function Details(p: DetailsProps) {
   }
   if (!d)
     return (
+      // biome-ignore lint/a11y/useAriaPropsSupportedByRole: loading placeholder labelled for tests and screen readers
       <div className="space-y-3 p-4" aria-label={C.openDetails}>
         {[1, 2, 3].map((n) => (
           <div key={n} className="h-3 animate-pulse rounded bg-muted motion-reduce:animate-none" />

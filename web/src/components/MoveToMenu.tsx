@@ -1,3 +1,4 @@
+import { ChevronDown, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -5,7 +6,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ChevronDown, Lock } from "lucide-react";
 import { C } from "../copy";
 import { type Movable, type MoveCheck, moveOptions } from "../logic/transitions";
 import type { ItemStatus } from "../types";

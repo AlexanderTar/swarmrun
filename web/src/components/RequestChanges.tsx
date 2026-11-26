@@ -11,7 +11,11 @@ export function RequestChanges({
   requestId,
   agentName,
   connected,
-}: { requestId: string; agentName: string; connected: boolean }) {
+}: {
+  requestId: string;
+  agentName: string;
+  connected: boolean;
+}) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [comment, setComment, clear] = useDraft(requestId, "changes");

@@ -1,4 +1,4 @@
-import { type Page, type TestInfo, expect, test } from "@playwright/test";
+import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { noHorizontalOverflow, settled } from "./helpers";
 
 // Desktop-only checks (32px density, mouse drag, side-by-side inbox) skip on the touch projects, which
@@ -880,7 +880,7 @@ for (const width of [1440, 390]) {
       const button = row.getByRole("button", { name: label, exact: true });
       await expect(button).toBeVisible();
       await expect(button.locator("svg")).toBeVisible();
-      expect((await button.innerText()).trim()).toBe("");
+      expect((await button.textContent())?.trim()).toBe("");
       const box = await button.boundingBox();
       // One line, level with the name, inside the row.
       expect(

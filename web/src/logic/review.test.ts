@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { NOW, seed } from "../mock/fixtures";
 import type { Request } from "../types";
 import {
-  SCOPE_LABEL,
   approveBody,
   closeResolution,
   gitBindingLine,
   isApprovalKind,
   reviewHeader,
   reviewPath,
+  SCOPE_LABEL,
 } from "./review";
 
 const req = (id: string) => seed().requests.find((r) => r.id === id) as Request;

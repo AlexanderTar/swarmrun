@@ -4,7 +4,6 @@ import { ConnectionBanner, ItemsErrorBanner, OutsideViewBanner } from "./compone
 import { Header } from "./components/Header";
 import { Sheet } from "./components/Sheet";
 import { ToastProvider } from "./components/Toast";
-import { C } from "./copy";
 import { DataProvider, useConnection } from "./data/hooks";
 import { useAgents, useBoardItems, useRequests } from "./data/queries";
 import { needsYou } from "./logic/inbox";
